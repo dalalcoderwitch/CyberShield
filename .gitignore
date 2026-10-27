@@ -1,0 +1,39 @@
+﻿# Python virtual environments
+.venv/
+venv/
+env/
+
+# Python generated files
+__pycache__/
+*.py[cod]
+*.pyd
+
+# Test and coverage artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local environment variables and secrets
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+
+# Flutter and Dart generated files
+mobile/.dart_tool/
+mobile/build/
+mobile/.flutter-plugins
+mobile/.flutter-plugins-dependencies
+mobile/.packages
+mobile/android/local.properties
+mobile/ios/Flutter/Generated.xcconfig
+
+# IDE files
+.idea/
+*.iml
+
+# Operating system files
+.DS_Store
+Thumbs.db
