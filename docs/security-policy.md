@@ -372,6 +372,11 @@ The following items have been implemented or observed during development:
 - DNS validation that rejects non-global resolved addresses.
 - A request configured with TLS verification enabled.
 - Automatic redirect handling disabled.
+
+These implementation observations do not independently prove that
+the actual network connection always uses the validated destination
+IP or that every DNS rebinding scenario is prevented. These properties
+remain subject to controlled integration testing and security review.
 - Connection and read timeouts configured.
 - Streaming responses that are closed without intentionally
   reading their bodies.

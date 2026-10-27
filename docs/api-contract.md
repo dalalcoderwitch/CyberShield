@@ -1,19 +1,25 @@
 ﻿# CyberShield — API Contract
 
-**Version:** Draft 1.1
+**Version:** Draft 1.2
+
 **Scope:** Project 1 — Website Security Assessment
-**Status:** Implementation-aligned draft; team approval pending
+
+**Status:** Draft — pending implementation verification and team approval
 
 ## 1. Purpose
 
-This document describes the current API request and response
-contracts for the Flutter client, Flask API, and scanner.
+This document defines the API contract between the Flutter client,
+the Flask API, and the scanner.
 
-It reflects the current implementation and identifies decisions
-that still require review.
+It specifies the request format, report structure, finding statuses,
+API error responses, and security requirements.
 
-Changes to field names, field types, status meanings, or error
-codes must be coordinated before the contract is finalized.
+Field names, field types, status meanings, and error codes must remain
+consistent across the API implementation, automated tests, and Flutter
+data models.
+
+This contract must not be considered finalized until it has been checked
+against the current implementation and reviewed by the team.
 
 ## 2. Local Development
 
@@ -21,29 +27,17 @@ Default development server:
 
 `http://127.0.0.1:5000`
 
-The base URL must be configured for the execution environment.
-An Android emulator may need `http://10.0.2.2:5000` to reach a
-development server running on the host computer.
+The API base URL must be configured for the environment in which the
+mobile application runs.
 
-The Flask development server is for local development only.
-Production deployment requires an appropriately secured setup.
+For a standard Android emulator, the host computer's local development
+server is commonly reachable through:
 
-## 3. Health Endpoint
+`http://10.0.2.2:5000`
 
-### Request
-
-`GET /api/v1/health`
-
-### Successful response
-
-HTTP status: `200 OK`
-
-```json
-{
-  "status": "ok",
-  "service": "CyberShield API"
-}
-Production deployment requires an appropriately secured setup.
+The Flask development server is intended for local development only.
+Production deployment requires a separately configured and secured
+environment.
 
 ## 3. Health Endpoint
 
@@ -60,44 +54,61 @@ HTTP status: `200 OK`
   "status": "ok",
   "service": "CyberShield API"
 }
-
+```
 
 This endpoint confirms that the API responds.
-It does not prove that every scanner dependency is ready.
-4. Scan Endpoint
-Request
-POST /api/v1/scan
+
+It does not prove that every scanner dependency is ready or that a
+scan will succeed.
+
+## 4. Scan Endpoint
+
+### Request
+
+`POST /api/v1/scan`
 
 Content type:
 
-application/json
-Request body
+`application/json`
+
+### Request body
+
+```json
 {
   "target_url": "https://example.com",
   "authorization_confirmed": true
 }
+```
 
+### Request fields
 
-Fields
-FieldTypeRequiredDescription
-target_urlstringYesRequested target URL
-authorization_confirmedbooleanYesUser confirms appropriate authorization
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `target_url` | string | Yes | Requested target URL |
+| `authorization_confirmed` | boolean | Yes | Confirms that the user states they have appropriate authorization |
 
-The server validates the request independently.
-Authorization confirmation alone is not a technical security control.
+The server must validate the request independently.
 
-The server must reject targets that do not pass its target policy.
-Disallowed targets must be rejected before the scan begins.
-5. Successful Scan Response
-When the API accepts the request and produces a report, it returns
-HTTP 200 OK.
+The authorization confirmation is not, by itself, a technical security
+control and does not make an otherwise prohibited target safe.
 
-The current report has this structure:
+The server must apply its target security policy before making an
+outbound request. A disallowed target must be rejected before scanning
+begins.
+
+## 5. Successful Scan Response
+
+When the request is accepted and a report is produced, the API returns
+HTTP `200 OK`.
+
+The response follows this structure:
+
+```json
 {
-  "scan_id": "UUID",
+  "scan_id": "00000000-0000-4000-8000-000000000001",
   "status": "completed",
   "target_url": "https://example.com",
-  "scanned_at": "ISO-8601 timestamp",
+  "scanned_at": "2026-10-27T12:00:00Z",
   "engine_version": "1.0.0",
   "http_status": 200,
   "summary": {
@@ -115,11 +126,63 @@ The current report has this structure:
       "status": "passed",
       "severity": "info",
       "confidence": "high",
-      "evidence": "Evidence observed for this check.",
-      "explanation": "Explanation of the observed result.",
-      "recommendation": "Recommended action based on the evidence.",
+      "evidence": "The HTTPS request completed with certificate verification enabled.",
+      "explanation": "The connection was established for the response examined.",
+      "recommendation": "Continue maintaining valid TLS configuration.",
       "limitations": [
-        "This result does not prove that the entire website is secure."
+        "This result does not establish that the entire website is secure."
+      ]
+    },
+    {
+      "check_id": "header_hsts",
+      "title": "HTTP Strict Transport Security",
+      "status": "warning",
+      "severity": "medium",
+      "confidence": "high",
+      "evidence": "The expected HSTS condition was not satisfied.",
+      "explanation": "The observed response requires review against the HSTS check rule.",
+      "recommendation": "Review the Strict-Transport-Security header and its max-age directive.",
+      "limitations": [
+        "The result applies to the response examined."
+      ]
+    },
+    {
+      "check_id": "header_csp",
+      "title": "Content Security Policy",
+      "status": "warning",
+      "severity": "medium",
+      "confidence": "high",
+      "evidence": "The enforced Content-Security-Policy header was not observed.",
+      "explanation": "The response did not provide the expected header evidence.",
+      "recommendation": "Review whether a suitable Content-Security-Policy header should be configured.",
+      "limitations": [
+        "Header presence alone does not establish policy quality."
+      ]
+    },
+    {
+      "check_id": "header_x_content_type_options",
+      "title": "X-Content-Type-Options",
+      "status": "warning",
+      "severity": "low",
+      "confidence": "high",
+      "evidence": "The expected nosniff value was not observed.",
+      "explanation": "The response did not satisfy the configured header check.",
+      "recommendation": "Review the X-Content-Type-Options header and consider setting it to nosniff.",
+      "limitations": [
+        "The result applies to the response examined."
+      ]
+    },
+    {
+      "check_id": "header_x_frame_options",
+      "title": "X-Frame-Options",
+      "status": "warning",
+      "severity": "medium",
+      "confidence": "high",
+      "evidence": "The expected DENY or SAMEORIGIN value was not observed.",
+      "explanation": "The response did not satisfy the configured X-Frame-Options check.",
+      "recommendation": "Review the framing policy and choose an appropriate protection.",
+      "limitations": [
+        "This check does not evaluate every possible framing protection."
       ]
     }
   ],
@@ -129,148 +192,218 @@ The current report has this structure:
   ],
   "notice": "This limited assessment does not guarantee complete website security."
 }
+```
 
-
-The JSON above illustrates the schema. Values are examples, not
-a fixed result for every scan.
+The JSON above is an illustrative schema example. Its timestamps, evidence,
+and finding results are not a fixed result for every target. The actual
+report must reflect observed evidence.
 
 A complete report contains five findings, one for each agreed check.
 
-scan_id is generated for the report.
-scanned_at is a UTC timestamp.
-engine_version identifies the scanner report version.
-http_status is the status code received from the target, or null
-when no target response was obtained.
+### Report field semantics
 
-The top-level report status completed means that report generation
-finished. It does not mean that all checks passed.
+| Field | Meaning |
+|---|---|
+| `scan_id` | Identifier generated for the report |
+| `status` | Report-generation status |
+| `target_url` | Requested target URL |
+| `scanned_at` | Scan timestamp in ISO 8601 format |
+| `engine_version` | Scanner report version |
+| `http_status` | Target response status code, or `null` if no response was obtained |
+| `summary` | Counts of findings by status |
+| `findings` | The five individual check results |
+| `limitations` | Report-level limitations |
+| `notice` | General assessment disclaimer |
 
-The summary counts must match the actual findings.
-The total field must equal the number of findings.
-6. Finding Schema
-Every finding must contain:
-FieldTypeDescription
-check_idstringStable check identifier
-titlestringHuman-readable check title
-statusstringResult status
-severitystringFinding severity
-confidencestringConfidence in the finding
-evidencestringObserved evidence
-explanationstringInterpretation of the result
-recommendationstringRelevant recommended action
-limitationsarray of stringsLimitations for this finding
+The top-level status `completed` means that report generation finished.
+It does not mean that all security checks passed.
 
-Allowed severity values:
-- info
-- low
-- medium
-- high
-Allowed confidence values:
-- low
-- medium
-- high
-limitations is an array of strings at both the finding level
-and the report level.
-7. Stable Check Identifiers
-The Project 1 scanner uses exactly these five identifiers:
-IdentifierCheck
-https_connectionHTTPS connection and TLS verification
-header_hstsStrict-Transport-Security
-header_cspContent-Security-Policy
-header_x_content_type_optionsX-Content-Type-Options
-header_x_frame_optionsX-Frame-Options
+The `summary.total` value must equal the number of findings.
+Every status count must match the findings actually returned.
+
+The illustrative report above has five findings: one `passed` and four
+`warning`. Therefore, the summary counts add up to five.
+
+## 6. Finding Schema
+
+Every finding must contain the following fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `check_id` | string | Stable identifier of the check |
+| `title` | string | Human-readable check title |
+| `status` | string | Result status |
+| `severity` | string | Severity classification |
+| `confidence` | string | Confidence in the finding |
+| `evidence` | string | Evidence observed |
+| `explanation` | string | Interpretation of the result |
+| `recommendation` | string | Recommended action based on the evidence |
+| `limitations` | array of strings | Limitations of the finding |
+
+### Allowed severity values
+
+- `info`
+- `low`
+- `medium`
+- `high`
+
+### Allowed confidence values
+
+- `low`
+- `medium`
+- `high`
+
+The `limitations` field must be an array of strings in each finding
+and at the report level.
+
+Severity, confidence, and status represent different concepts and
+must not be used interchangeably.
+
+## 7. Stable Check Identifiers
+
+Project 1 defines exactly five check identifiers:
+
+| Identifier | Check |
+|---|---|
+| `https_connection` | HTTPS connection and TLS verification |
+| `header_hsts` | Strict-Transport-Security |
+| `header_csp` | Content-Security-Policy |
+| `header_x_content_type_options` | X-Content-Type-Options |
+| `header_x_frame_options` | X-Frame-Options |
 
 Identifiers must remain consistent across scanner code, report
 generation, automated tests, API documentation, and Flutter models.
-8. Result Statuses
-StatusMeaning
-passedThe specific check passed its documented rule
-warningAn observation requires review
-not_verifiedAvailable evidence is insufficient to verify the check
-errorThe check encountered an execution or processing error
-skippedThe check was deliberately not executed because of a defined constraint
 
-Missing evidence must never be reported as passed.
+## 8. Finding Statuses
 
-A connection failure must not cause response headers to be reported
-as missing; those checks should be not_verified when no response
-was obtained.
+| Status | Meaning |
+|---|---|
+| `passed` | The specific check satisfied its documented rule based on sufficient evidence |
+| `warning` | An observation requires review |
+| `not_verified` | Available evidence is insufficient to verify the check |
+| `error` | The check encountered an execution or processing error |
+| `skipped` | The check was deliberately not executed because of a defined constraint |
 
-Status, severity, and confidence have different meanings and must
-not be used interchangeably.
-9. Current Error Response Format
+Missing evidence must never be reported as `passed`.
+
+A connection failure must not cause response headers to be classified
+as missing. When no usable response is obtained, those checks should
+be `not_verified`, unless a different status is explicitly justified
+by the agreed implementation contract.
+
+## 9. API Error Response
+
 API errors use this structure:
+
+```json
 {
   "error": {
     "code": "INVALID_REQUEST",
-    "message": "Request data is invalid."
+    "message": "بيانات الطلب غير صالحة."
   }
 }
+```
 
+The example message is illustrative. Actual client-facing messages
+must match the implementation, remain safe to display to users, and
+avoid exposing internal exception details.
 
-The actual client-facing messages in the current implementation
-are Arabic. Messages must remain safe to display to users.
-Current error codes
-HTTP statusCodeMeaning
-400INVALID_REQUESTRequest JSON or fields are invalid
-403AUTHORIZATION_REQUIREDAuthorization confirmation is false
-403TARGET_NOT_ALLOWEDTarget is rejected by the target policy
-413REQUEST_TOO_LARGERequest exceeds the configured size limit
-500INTERNAL_ERRORUnexpected server-side error
+### Current documented error codes
+
+| HTTP status | Error code | Meaning |
+|---|---|---|
+| `400` | `INVALID_REQUEST` | Request JSON or fields are invalid |
+| `403` | `AUTHORIZATION_REQUIRED` | Authorization confirmation is false |
+| `403` | `TARGET_NOT_ALLOWED` | The target is rejected by the target security policy |
+| `413` | `REQUEST_TOO_LARGE` | The request exceeds the configured size limit |
+| `500` | `INTERNAL_ERROR` | An unexpected server-side error occurred |
+
+A missing or non-boolean authorization_confirmed field is treated
+as INVALID_REQUEST (400). A boolean false value is treated as
+AUTHORIZATION_REQUIRED (403).
+
+These codes and status mappings must be verified against the current
+Flask implementation and API tests before this document is approved.
 
 Internal exception details, stack traces, secrets, and sensitive
 data must not be returned in client-facing responses.
-10. HTTP Status Semantics
-The HTTP status code of the API response is separate from the
-http_status field in the report.
-- API 200: a report was returned.
-- API 400: request data is invalid.
-- API 403: authorization confirmation or target policy prevents scanning.
-- API 413: request body exceeds the configured size limit.
-- API 500: an unexpected server error occurred.
-If a scan produces a report with a failed or unverified check,
-the API may still return HTTP 200 because the request itself
-was processed and a report was produced.
 
-A disallowed target must be rejected before the scanner performs
-a target request.
-11. Current Check Behavior and Limitations
-The scanner currently checks:
-- HTTPS/TLS connection behavior.
-- Basic HSTS presence and positive max-age.
+## 10. HTTP Status Semantics
+
+The API response status code is separate from the report's `http_status`
+field.
+
+- API `200`: a report was returned.
+- API `400`: request data is invalid.
+- API `403`: authorization confirmation or target policy prevents scanning.
+- API `413`: the request body exceeds the configured size limit.
+- API `500`: an unexpected server error occurred.
+
+A scan can return API HTTP `200` even when one or more findings have
+status `warning`, `not_verified`, or `error`, provided the API processed
+the request and successfully returned a report.
+
+A target rejected by the security policy must be rejected before the
+scanner makes an outbound request.
+
+Plain HTTP URLs are rejected by the server-side target policy before
+the outbound scan request begins. The API returns HTTP 403 with error
+code TARGET_NOT_ALLOWED. No scan report is generated for this request.
+
+## 11. Current Check Behavior and Limitations
+
+The scanner is intended to check:
+
+- HTTPS connection and TLS certificate verification.
+- HSTS presence and a positive `max-age`.
 - Presence of the enforced Content-Security-Policy header.
-- X-Content-Type-Options: nosniff.
-- X-Frame-Options: DENY or SAMEORIGIN.
-The current CSP check does not deeply evaluate policy quality.
-The current header checks do not prove that the full website is secure.
+- `X-Content-Type-Options: nosniff`.
+- `X-Frame-Options: DENY` or `SAMEORIGIN`.
+
+The CSP check does not deeply evaluate policy quality.
+
+The header checks do not prove that the entire website is secure.
 
 The scanner does not automatically follow redirects.
 The report describes the response examined by the scanner.
-12. Security Requirements
+
+## 12. Security Requirements
+
+The scanner and API must:
+
 - Keep TLS certificate verification enabled.
 - Reject disallowed destinations before connecting.
-- Do not automatically follow redirects to unchecked destinations.
-- Ensure the actual connection uses an IP address permitted by target policy.
-- Preserve hostname verification when connecting to a validated IP.
+- Avoid automatically following redirects to unchecked destinations.
+- Ensure the actual connection uses a destination IP permitted by policy.
+- Preserve TLS hostname verification when connecting to a validated IP.
 - Use explicit connection and read timeouts.
-- Limit request and response resources.
-- Do not turn missing evidence into a passed result.
-- Do not expose sensitive internal error information.
-- Do not claim that a website is completely secure.
+- Enforce appropriate request and response resource limits.
+- Avoid treating missing evidence as a successful result.
+- Avoid exposing sensitive internal error information.
+- Avoid claiming that a website is completely secure.
+
 Passing mocked tests alone does not prove that the real network
 connection satisfies all these requirements.
-13. Known Implementation Review Items
-The following items remain subject to additional verification:
-- Actual destination IP pinning and TLS hostname validation.
+
+## 13. Known Implementation Review Items
+
+The following items require implementation review or additional testing:
+
+- Actual destination IP pinning and TLS hostname verification.
 - DNS rebinding resistance.
 - Controlled integration tests for certificate failures.
 - DNS failures, timeouts, and IPv4/IPv6 edge cases.
-- Explicit resource limits and a total scan deadline.
+- Response-size limits and a total scan deadline.
 - Concurrency and request rate controls.
 - Safe logging and handling of sensitive URL components.
-These items must not be described as fully implemented merely
-because the current automated suite passes.
-14. Team Approval Checklist
+- Consistent handling of plain HTTP URLs.
+- Verification that every documented API error mapping is implemented.
+
+These items must not be described as fully implemented merely because
+the current automated suite passes.
+
+## 14. Team Approval Checklist
+
 - [ ] Dalal reviews finding semantics and scanner output.
 - [ ] Bailsan reviews Flask request validation and API error behavior.
 - [ ] Ahmad reviews the response schema for Dart models and UI.
@@ -278,4 +411,6 @@ because the current automated suite passes.
 - [ ] The team agrees on scan-level versus API-level failure behavior.
 - [ ] API tests validate the approved contract.
 - [ ] The approved version is recorded in Git.
-This document remains a draft until the team has reviewed it.
+
+This document remains a draft until the implementation has been checked
+and the team has reviewed and approved the contract.

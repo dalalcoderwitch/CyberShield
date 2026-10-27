@@ -1,4 +1,4 @@
-﻿@'
+﻿
 # CyberShield — Dalal's Week 1 Progress Report
 
 **Project:** CyberShield — Project 1
@@ -179,4 +179,3 @@ backend ownership review, and agreement on shared interfaces.
 
 The scanner must not be described as production-ready until the
 remaining security requirements have been tested and reviewed.
-'@ | Set-Content -Path .\docs\week-1-summary.md -Encoding utf8
