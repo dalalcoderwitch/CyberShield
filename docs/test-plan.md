@@ -9,7 +9,7 @@ Passing tests does not prove that the scanner is completely secure.
 
 ## 2. Automated Tests Already Available
 
-The current test suite contains 21 tests across three files:
+The current test suite contains 23 tests across three files:
 
 - `tests/test_scanner.py`
 - `tests/test_report.py`
