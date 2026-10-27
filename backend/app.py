@@ -1,6 +1,6 @@
 from flask import Flask, jsonify, request
 
-from security_scanner.report import scan_target
+from backend.scanner import scan_target
 from security_scanner.scanner import validate_url
 
 
@@ -9,12 +9,11 @@ def create_app():
 
     app = Flask(__name__)
 
-    # تحديد حجم الطلبات لمنع إرسال أجسام ضخمة.
     app.config["MAX_CONTENT_LENGTH"] = 16 * 1024
 
     @app.get("/api/v1/health")
     def health():
-        """التأكد من أن API يعمل."""
+        """التحقق من أن API يعمل."""
         return jsonify({
             "status": "ok",
             "service": "CyberShield API",
@@ -62,7 +61,6 @@ def create_app():
             }), 403
 
         try:
-            # التحقق من أن الرابط مسموح قبل تشغيل الفحص.
             if not validate_url(target_url):
                 return jsonify({
                     "error": {
@@ -74,14 +72,11 @@ def create_app():
                     }
                 }), 403
 
-            # الماسح يجري التحقق من الرابط مرة أخرى
-            # قبل الاتصال الفعلي.
             report = scan_target(target_url)
 
             return jsonify(report), 200
 
         except Exception:
-            # التفاصيل الداخلية تبقى في سجل الخادم فقط.
             app.logger.exception("Scan request failed")
 
             return jsonify({
