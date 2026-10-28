@@ -1,3 +1,5 @@
+import logging
+
 import backend.app as api_module
 
 
@@ -50,8 +52,8 @@ def test_scan_rejects_disallowed_target(monkeypatch):
 
     monkeypatch.setattr(
         api_module,
-        "validate_url",
-        lambda url: False,
+        "resolve_target",
+        lambda url: None,
     )
 
     response = client.post(
@@ -63,15 +65,14 @@ def test_scan_rejects_disallowed_target(monkeypatch):
     )
 
     assert response.status_code == 403
-    assert (
-        response.json["error"]["code"]
-        == "TARGET_NOT_ALLOWED"
-    )
+    assert response.json["error"]["code"] == "TARGET_NOT_ALLOWED"
 
 
 def test_scan_returns_report(monkeypatch):
     app = api_module.create_app()
     client = app.test_client()
+
+    resolved = object()
 
     expected_report = {
         "target_url": "https://example.com",
@@ -90,15 +91,18 @@ def test_scan_returns_report(monkeypatch):
 
     monkeypatch.setattr(
         api_module,
-        "validate_url",
-        lambda url: True,
+        "resolve_target",
+        lambda url: resolved,
     )
 
-    monkeypatch.setattr(
-        api_module,
-        "scan_target",
-        lambda url: expected_report,
-    )
+    captured = {}
+
+    def fake_scan(url, resolved_target=None):
+        captured["url"] = url
+        captured["resolved_target"] = resolved_target
+        return expected_report
+
+    monkeypatch.setattr(api_module, "scan_target", fake_scan)
 
     response = client.post(
         "/api/v1/scan",
@@ -110,6 +114,41 @@ def test_scan_returns_report(monkeypatch):
 
     assert response.status_code == 200
     assert response.json == expected_report
+    assert captured["url"] == "https://example.com"
+    assert captured["resolved_target"] is resolved
+
+
+def test_scan_resolves_target_once_and_passes_result(monkeypatch):
+    """يجب تمرير نتيجة التحقق نفسها إلى محرك الفحص."""
+    app = api_module.create_app()
+    client = app.test_client()
+
+    target_url = "https://example.com"
+    resolved = object()
+    resolution_calls = []
+
+    def fake_resolve(url):
+        resolution_calls.append(url)
+        return resolved
+
+    def fake_scan(url, resolved_target=None):
+        assert url == target_url
+        assert resolved_target is resolved
+        return {"status": "completed"}
+
+    monkeypatch.setattr(api_module, "resolve_target", fake_resolve)
+    monkeypatch.setattr(api_module, "scan_target", fake_scan)
+
+    response = client.post(
+        "/api/v1/scan",
+        json={
+            "target_url": target_url,
+            "authorization_confirmed": True,
+        },
+    )
+
+    assert response.status_code == 200
+    assert resolution_calls == [target_url]
 
 
 def test_scan_hides_internal_error(monkeypatch):
@@ -118,18 +157,14 @@ def test_scan_hides_internal_error(monkeypatch):
 
     monkeypatch.setattr(
         api_module,
-        "validate_url",
-        lambda url: True,
+        "resolve_target",
+        lambda url: object(),
     )
 
-    def fail_scan(url):
+    def fail_scan(url, resolved_target=None):
         raise RuntimeError("private internal details")
 
-    monkeypatch.setattr(
-        api_module,
-        "scan_target",
-        fail_scan,
-    )
+    monkeypatch.setattr(api_module, "scan_target", fail_scan)
 
     response = client.post(
         "/api/v1/scan",
@@ -140,10 +175,46 @@ def test_scan_hides_internal_error(monkeypatch):
     )
 
     assert response.status_code == 500
-    assert (
-        response.json["error"]["code"]
-        == "INTERNAL_ERROR"
-    )
+    assert response.json["error"]["code"] == "INTERNAL_ERROR"
     assert "private internal details" not in response.get_data(
         as_text=True
     )
+
+
+def test_scan_does_not_log_sensitive_target_url(monkeypatch, caplog):
+    """التأكد من عدم تسجيل معاملات URL الحساسة عند حدوث خطأ."""
+    app = api_module.create_app()
+    client = app.test_client()
+
+    target_url = (
+        "https://example.com/scan"
+        "?access_token=secret-log-token"
+    )
+
+    monkeypatch.setattr(
+        api_module,
+        "resolve_target",
+        lambda url: object(),
+    )
+
+    def fail_scan(url, resolved_target=None):
+        raise RuntimeError(
+            f"Simulated failure for target: {url}"
+        )
+
+    monkeypatch.setattr(api_module, "scan_target", fail_scan)
+
+    with caplog.at_level(logging.ERROR, logger=app.logger.name):
+        response = client.post(
+            "/api/v1/scan",
+            json={
+                "target_url": target_url,
+                "authorization_confirmed": True,
+            },
+        )
+
+    assert response.status_code == 500
+    assert response.json["error"]["code"] == "INTERNAL_ERROR"
+    assert "secret-log-token" not in caplog.text
+    assert "access_token=" not in caplog.text
+    assert "Simulated failure for target" not in caplog.text

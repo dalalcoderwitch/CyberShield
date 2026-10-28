@@ -75,8 +75,7 @@ checks the target before scanning, and returns structured JSON.
 
 The latest automated test run reported:
 
-`23 passed`
-
+`41 passed`
 Test distribution:
 
 - `tests/test_api.py`: 6 tests
@@ -170,7 +169,7 @@ The Python environment, preliminary scanner, report model, Flask
 integration entry point, documentation, and automated test suite
 have made substantial progress.
 
-The automated suite currently passes 23 tests. The implementation
+The automated suite currently passes 41 tests, including additional security regression tests. The implementation
 has advanced beyond the original Week 1 placeholder, but security
 verification and team contract approval remain open.
 

@@ -193,7 +193,8 @@ A test collection count alone does not indicate that the tests passed. Record th
 
 ## 10. Current Acceptance Criteria
 
-- The automated suite collects the expected 23 tests.
+- The current automated suite collects 41 tests, as verified during the latest review.
+- The test count must be updated whenever tests are added or removed.
 - All current automated tests pass.
 - The test plan distinguishes mocked behavior from real network verification.
 - Known scanner limitations are explicitly documented.

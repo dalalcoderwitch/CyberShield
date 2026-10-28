@@ -1,14 +1,13 @@
 from flask import Flask, jsonify, request
 
 from backend.scanner import scan_target
-from security_scanner.scanner import validate_url
+from security_scanner.scanner import resolve_target
 
 
 def create_app():
     """إنشاء تطبيق Flask وإعداد مسارات API."""
 
     app = Flask(__name__)
-
     app.config["MAX_CONTENT_LENGTH"] = 16 * 1024
 
     @app.get("/api/v1/health")
@@ -61,7 +60,10 @@ def create_app():
             }), 403
 
         try:
-            if not validate_url(target_url):
+            # التحقق من الهدف وحل DNS مرة واحدة في مسار API.
+            resolved_target = resolve_target(target_url)
+
+            if resolved_target is None:
                 return jsonify({
                     "error": {
                         "code": "TARGET_NOT_ALLOWED",
@@ -72,12 +74,20 @@ def create_app():
                     }
                 }), 403
 
-            report = scan_target(target_url)
+            # تمرير نتيجة التحقق نفسها إلى محرك الفحص.
+            report = scan_target(
+                target_url,
+                resolved_target=resolved_target,
+            )
 
             return jsonify(report), 200
 
         except Exception:
-            app.logger.exception("Scan request failed")
+            # لا نسجل نص الاستثناء أو تفاصيله؛ فقد يحتوي
+            # على الرابط أو بيانات حساسة.
+            app.logger.error(
+                "Scan request failed; exception details omitted."
+            )
 
             return jsonify({
                 "error": {

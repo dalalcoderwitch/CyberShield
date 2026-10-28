@@ -1,13 +1,19 @@
-"""واجهة مستقرة لاستدعاء محرك فحص CyberShield."""
+"""واجهة ثابتة لدمج محرك الفحص مع Flask."""
 
 from security_scanner.report import scan_target as _scan_target
 
 
-def scan_target(target_url: str) -> dict:
+def scan_target(target_url: str, resolved_target=None) -> dict:
     """
-    تنفيذ الفحص وإرجاع التقرير الموحد.
+    تمرير رابط الهدف ونتيجة التحقق الاختيارية إلى محرك التقرير.
 
-    يجب على المستدعي تطبيق التحقق من الطلب وسياسة الهدف.
-    يتولى محرك الفحص أيضًا التحقق من الرابط قبل الاتصال.
+    عند عدم توفير نتيجة تحقق مسبقة، يحافظ المحرك على سلوكه
+    السابق ويتحقق من الهدف بنفسه.
     """
-    return _scan_target(target_url)
+    if resolved_target is None:
+        return _scan_target(target_url)
+
+    return _scan_target(
+        target_url,
+        resolved_target=resolved_target,
+    )

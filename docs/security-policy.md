@@ -162,15 +162,24 @@ Every redirect destination must pass the policy before a new request.
 
 ### 7.1 Timeouts
 
-The current scanner uses an initial connection timeout of 3 seconds
+The scanner configures an HTTP connection timeout of 3 seconds
 and a read timeout of 5 seconds.
 
-These are per-operation limits, not a guaranteed maximum duration for
-the entire scan.
+DNS resolution is performed in a bounded background worker with
+a 2-second wait limit and a maximum of four concurrent lookups.
 
-The implementation must be tested for slow connections and delayed
-responses. A total scan deadline should be enforced before deployment
-to limit resource consumption.
+When the wait limit expires, the target is rejected. However, the
+underlying getaddrinfo operation cannot be forcibly cancelled by
+this timeout wrapper. A timed-out DNS operation may continue in
+the background and retain a lookup slot until it finishes.
+
+These settings do not guarantee a maximum duration for the entire
+scan. The DNS timeout test currently uses a simulated slow lookup;
+real operating-system DNS behavior still requires controlled
+integration testing.
+
+A total scan deadline and further resource controls must be
+evaluated before deployment.
 
 ### 7.2 Response handling
 

@@ -20,18 +20,15 @@ def test_scan_target_returns_complete_report(monkeypatch):
 
     report = scan_target("https://example.com")
 
-    # الحقول الأساسية للتقرير.
     assert report["target_url"] == "https://example.com"
     assert report["http_status"] == 200
     assert report["status"] == "completed"
     assert report["engine_version"] == "1.0.0"
     assert report["notice"]
 
-    # التأكد من أن scan_id معرّف UUID صالح.
     parsed_scan_id = UUID(report["scan_id"])
     assert str(parsed_scan_id) == report["scan_id"]
 
-    # التحقق من ملخص النتائج.
     assert len(report["findings"]) == 5
     assert report["summary"]["total"] == 5
     assert report["summary"]["passed"] == 5
@@ -40,7 +37,6 @@ def test_scan_target_returns_complete_report(monkeypatch):
     assert report["summary"]["error"] == 0
     assert report["summary"]["skipped"] == 0
 
-    # التحقق من معرّفات الفحوصات.
     expected_ids = {
         "https_connection",
         "header_hsts",
@@ -56,7 +52,6 @@ def test_scan_target_returns_complete_report(monkeypatch):
 
     assert actual_ids == expected_ids
 
-    # التحقق من حقول كل نتيجة.
     required_fields = {
         "check_id",
         "title",
@@ -76,8 +71,6 @@ def test_scan_target_returns_complete_report(monkeypatch):
         assert finding["evidence"]
         assert finding["explanation"]
         assert finding["recommendation"]
-
-        # القيود يجب أن تكون قائمة، لا نصًا منفردًا.
         assert isinstance(finding["limitations"], list)
         assert finding["limitations"]
 
@@ -159,3 +152,57 @@ def test_report_summary_matches_finding_statuses(monkeypatch):
         assert summary[status] == expected_count
 
     assert summary["total"] == len(findings)
+
+
+def test_report_redacts_query_and_fragment(monkeypatch):
+    """
+    التأكد من عدم ظهور معاملات الاستعلام والجزء fragment
+    في رابط الهدف داخل التقرير.
+    """
+
+    headers = {
+        "Strict-Transport-Security": "max-age=31536000",
+        "Content-Security-Policy": "default-src 'self'",
+        "X-Content-Type-Options": "nosniff",
+        "X-Frame-Options": "DENY",
+    }
+
+    monkeypatch.setattr(
+        "security_scanner.report._safe_get_response",
+        lambda url: (200, headers, None),
+    )
+
+    report = scan_target(
+        "https://example.com/admin"
+        "?access_token=secret-test-token"
+        "#private-fragment"
+    )
+
+    assert report["target_url"] == "https://example.com/admin"
+
+    report_text = repr(report)
+
+    assert "secret-test-token" not in report_text
+    assert "private-fragment" not in report_text
+    assert "access_token=" not in report_text
+
+
+def test_report_does_not_echo_invalid_target_url(monkeypatch):
+    """الرابط غير الصالح لا يجب أن يظهر خامًا في التقرير."""
+
+    monkeypatch.setattr(
+        "security_scanner.report._safe_get_response",
+        lambda url: (None, {}, "invalid"),
+    )
+
+    report = scan_target(
+        "https://user:secret@example.com/admin?token=hidden"
+    )
+
+    assert report["target_url"] == "[invalid target URL]"
+
+    report_text = repr(report)
+
+    assert "secret" not in report_text
+    assert "hidden" not in report_text
+    assert "user:" not in report_text

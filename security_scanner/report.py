@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
 
 from .scanner import _safe_get_response, check_security_headers
@@ -59,11 +60,75 @@ REPORT_LIMITATIONS = [
     "لا يتبع الماسح التحويلات تلقائيًا؛ تُفحص الاستجابة الأولى فقط.",
     "وجود ترويسة لا يثبت أن إعدادها آمن أو مناسب بالكامل.",
     "النتائج تخص الاستجابة التي تم فحصها وقد تختلف باختلاف المسار أو الخادم.",
+    "تُحذف معاملات الاستعلام والجزء fragment من رابط الهدف المعروض في التقرير.",
 ]
 
 REPORT_NOTICE = (
     "هذا التقرير تقييم أولي محدود، ولا يضمن أمان الموقع بالكامل."
 )
+
+
+def _safe_report_target_url(target_url: str) -> str:
+    """
+    تجهيز رابط آمن للعرض في التقرير.
+
+    تُحذف معلومات المستخدم ومعاملات الاستعلام والجزء fragment.
+    يُحتفظ بالمضيف والمسار لتحديد المورد الذي جرى فحصه.
+    إذا كان الرابط غير صالح أو غير مدعوم، لا نعيد قيمته الأصلية.
+    """
+    if not isinstance(target_url, str) or not target_url:
+        return ""
+
+    if any(
+        ord(char) < 32 or ord(char) == 127
+        for char in target_url
+    ):
+        return "[invalid target URL]"
+
+    try:
+        parsed = urlsplit(target_url)
+        port = parsed.port
+    except ValueError:
+        return "[invalid target URL]"
+
+    if (
+        parsed.scheme.lower() != "https"
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or port not in (None, 443)
+    ):
+        return "[invalid target URL]"
+
+    try:
+        hostname = (
+            parsed.hostname.encode("idna")
+            .decode("ascii")
+            .lower()
+            .rstrip(".")
+        )
+    except UnicodeError:
+        return "[invalid target URL]"
+
+    if not hostname:
+        return "[invalid target URL]"
+
+    # وضع الأقواس حول IPv6 عند تكوين عنوان العرض.
+    if ":" in hostname:
+        safe_netloc = f"[{hostname}]"
+    else:
+        safe_netloc = hostname
+
+    # لا نعيد query أو fragment؛ فقد يحتويان بيانات حساسة.
+    return urlunsplit(
+        (
+            "https",
+            safe_netloc,
+            parsed.path,
+            "",
+            "",
+        )
+    )
 
 
 def _make_finding(
@@ -116,20 +181,26 @@ def _summarize(findings: list[dict]) -> dict:
     return summary
 
 
-def scan_target(target_url: str) -> dict:
+def scan_target(target_url: str, resolved_target=None) -> dict:
     """
     تنفيذ الفحوصات المحددة وإرجاع تقرير منظم.
 
     لا يعني اكتمال إنشاء التقرير أن جميع الفحوصات نجحت.
     """
-
     scanned_at = datetime.now(timezone.utc).isoformat()
     scan_id = str(uuid4())
 
-    safe_target_url = target_url if isinstance(target_url, str) else ""
+    safe_target_url = _safe_report_target_url(target_url)
 
-    status_code, headers, error = _safe_get_response(safe_target_url)
-
+    # يجب أن يبقى فحص الهدف داخل الماسح فعالًا،
+    # حتى لو استُدعيت هذه الدالة مباشرةً خارج Flask.
+    if resolved_target is None:
+        status_code, headers, error = _safe_get_response(target_url)
+    else:
+        status_code, headers, error = _safe_get_response(
+            target_url,
+            resolved_target=resolved_target,
+        )
     findings = []
 
     # فحص HTTPS وTLS.
