@@ -1,4 +1,4 @@
-﻿# CyberShield — Test Plan
+# CyberShield — Test Plan
 
 ## 1. Purpose
 
@@ -193,7 +193,7 @@ A test collection count alone does not indicate that the tests passed. Record th
 
 ## 10. Current Acceptance Criteria
 
-- The current automated suite collects 41 tests, as verified during the latest review.
+- The current automated suite collects 43 tests, as verified during the latest review.
 - The test count must be updated whenever tests are added or removed.
 - All current automated tests pass.
 - The test plan distinguishes mocked behavior from real network verification.

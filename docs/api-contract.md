@@ -317,6 +317,7 @@ avoid exposing internal exception details.
 | `403` | `TARGET_NOT_ALLOWED` | The target is rejected by the target security policy |
 | `413` | `REQUEST_TOO_LARGE` | The request exceeds the configured size limit |
 | `500` | `INTERNAL_ERROR` | An unexpected server-side error occurred |
+| `503` | `SCAN_CAPACITY_EXCEEDED` | The maximum number of concurrent scans has been reached |
 
 A missing or non-boolean authorization_confirmed field is treated
 as INVALID_REQUEST (400). A boolean false value is treated as
@@ -338,6 +339,7 @@ field.
 - API `403`: authorization confirmation or target policy prevents scanning.
 - API `413`: the request body exceeds the configured size limit.
 - API `500`: an unexpected server error occurred.
+- API `503`: scan capacity is exhausted; the request was not started.
 
 A scan can return API HTTP `200` even when one or more findings have
 status `warning`, `not_verified`, or `error`, provided the API processed

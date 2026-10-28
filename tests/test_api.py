@@ -1,6 +1,7 @@
 import logging
 
 import backend.app as api_module
+from threading import BoundedSemaphore
 
 
 def test_health_endpoint():
@@ -218,3 +219,40 @@ def test_scan_does_not_log_sensitive_target_url(monkeypatch, caplog):
     assert "secret-log-token" not in caplog.text
     assert "access_token=" not in caplog.text
     assert "Simulated failure for target" not in caplog.text
+
+def test_scan_rejects_request_when_capacity_is_full(monkeypatch):
+    """رفض بدء فحص جديد عند امتلاء السعة المتاحة."""
+
+    app = api_module.create_app()
+    client = app.test_client()
+
+    monkeypatch.setattr(
+        api_module,
+        "_SCAN_SLOTS",
+        BoundedSemaphore(0),
+    )
+
+    def unexpected_resolve(url):
+        raise AssertionError(
+            "لا يجب بدء التحقق من الهدف عند امتلاء السعة"
+        )
+
+    monkeypatch.setattr(
+        api_module,
+        "resolve_target",
+        unexpected_resolve,
+    )
+
+    response = client.post(
+        "/api/v1/scan",
+        json={
+            "target_url": "https://example.com",
+            "authorization_confirmed": True,
+        },
+    )
+
+    assert response.status_code == 503
+    assert (
+        response.json["error"]["code"]
+        == "SCAN_CAPACITY_EXCEEDED"
+    )

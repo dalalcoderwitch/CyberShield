@@ -1,17 +1,16 @@
-import time
-from threading import Event
-
-import security_scanner.scanner as scanner_module
-
-
 import socket
 import ssl
+import time
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from threading import BoundedSemaphore, Event, Thread
 
 import pytest
 import requests
 from urllib3.connection import HTTPSConnection
 
+import security_scanner.scanner as scanner_module
 from security_scanner.scanner import (
+    PinnedIPAdapter,
     _safe_get_response,
     check_https,
     check_security_headers,
@@ -97,7 +96,7 @@ def test_reject_private_dns_address(monkeypatch):
             (
                 socket.AF_INET,
                 socket.SOCK_STREAM,
-                6,
+                socket.IPPROTO_TCP,
                 "",
                 ("192.168.1.20", 443),
             )
@@ -129,14 +128,14 @@ def test_reject_mixed_public_and_private_dns_addresses(monkeypatch):
             (
                 socket.AF_INET,
                 socket.SOCK_STREAM,
-                6,
+                socket.IPPROTO_TCP,
                 "",
                 ("93.184.216.34", 443),
             ),
             (
                 socket.AF_INET,
                 socket.SOCK_STREAM,
-                6,
+                socket.IPPROTO_TCP,
                 "",
                 ("192.168.1.20", 443),
             ),
@@ -154,7 +153,7 @@ def test_private_dns_address_never_triggers_http_request(monkeypatch):
             (
                 socket.AF_INET,
                 socket.SOCK_STREAM,
-                6,
+                socket.IPPROTO_TCP,
                 "",
                 ("192.168.1.20", 443),
             )
@@ -162,7 +161,9 @@ def test_private_dns_address_never_triggers_http_request(monkeypatch):
     )
 
     def unexpected_request(*args, **kwargs):
-        raise AssertionError("Unexpected HTTP request to a private address")
+        raise AssertionError(
+            "Unexpected HTTP request to a private address"
+        )
 
     monkeypatch.setattr(requests.Session, "get", unexpected_request)
 
@@ -217,6 +218,7 @@ def test_reject_ipv6_transition_addresses_before_http_request(
 
 def test_reject_dns_resolution_failure(monkeypatch):
     """فشل DNS يجب أن يؤدي إلى رفض الهدف."""
+
     def dns_failure(*args, **kwargs):
         raise socket.gaierror("Simulated DNS failure")
 
@@ -276,13 +278,16 @@ def test_reject_unexpected_dns_address_family(monkeypatch):
 
 def test_dns_failure_never_triggers_http_request(monkeypatch):
     """فشل DNS يجب أن يمنع الوصول إلى طبقة طلب HTTP."""
+
     def dns_failure(*args, **kwargs):
         raise socket.gaierror("Simulated DNS failure")
 
     monkeypatch.setattr(socket, "getaddrinfo", dns_failure)
 
     def unexpected_request(*args, **kwargs):
-        raise AssertionError("HTTP request must not run after DNS failure")
+        raise AssertionError(
+            "HTTP request must not run after DNS failure"
+        )
 
     monkeypatch.setattr(requests.Session, "get", unexpected_request)
 
@@ -528,23 +533,32 @@ def test_resolved_target_is_reused_without_second_dns_lookup(monkeypatch):
     assert captured["url"] == (
         "https://93.184.216.34:443/security-check"
     )
-
-    # يجب ألا يكون الاتصال قد أعاد حل DNS.
     assert dns_calls == 1
+
+
 def test_dns_timeout_rejects_target_before_http_request(monkeypatch):
     """يجب رفض الهدف إذا تجاوز حل DNS المهلة المحددة."""
 
+    dns_started = Event()
+    dns_finished = Event()
+
+    # خانة واحدة تجعل اختبار تحرير السعة قابلًا للتحقق.
     monkeypatch.setattr(
         scanner_module,
         "_DNS_TIMEOUT_SECONDS",
         0.01,
     )
-
-    dns_finished = Event()
+    monkeypatch.setattr(
+        scanner_module,
+        "_DNS_LOOKUP_SLOTS",
+        BoundedSemaphore(1),
+    )
 
     def slow_dns(*args, **kwargs):
+        dns_started.set()
+
         try:
-            # محاكاة DNS بطيء دون إجراء أي اتصال شبكي.
+            # محاكاة DNS بطيء دون اتصال بموقع خارجي.
             time.sleep(0.15)
 
             return [
@@ -584,9 +598,21 @@ def test_dns_timeout_rejects_target_before_http_request(monkeypatch):
     assert headers == {}
     assert error == "invalid"
 
-    # ننتظر انتهاء محاكاة DNS الخلفية حتى لا تترك
-    # العملية عملًا معلقًا يؤثر في الاختبارات التالية.
-    assert dns_finished.wait(timeout=1)
+    assert dns_started.wait(timeout=1), (
+        "لم يبدأ عامل DNS ضمن الوقت المتوقع"
+    )
+
+    assert dns_finished.wait(timeout=1), (
+        "لم تنتهِ محاكاة DNS ضمن الوقت المتوقع"
+    )
+
+    # لا ينجح هذا الاكتساب إلا بعد تحرير العامل للخانة الوحيدة.
+    acquired = scanner_module._DNS_LOOKUP_SLOTS.acquire(
+        timeout=1
+    )
+    assert acquired, "لم تتحرر خانة DNS ضمن الوقت المتوقع"
+
+    scanner_module._DNS_LOOKUP_SLOTS.release()
 
 def test_response_body_is_not_read_and_response_is_closed(monkeypatch):
     """التأكد من عدم قراءة الجسم وإغلاق الاستجابة والجلسة."""
@@ -646,3 +672,186 @@ def test_response_body_is_not_read_and_response_is_closed(monkeypatch):
     assert fake_response.closed is True
     assert len(created_sessions) == 1
     assert created_sessions[0].was_closed is True
+
+
+def test_real_tls_rejects_untrusted_self_signed_certificate(tmp_path):
+    """
+    مصافحة TLS حقيقية مع خادم محلي:
+    1. رفض الشهادة الذاتية التوقيع غير الموثوقة.
+    2. رفض اسم مضيف غير مطابق مع الثقة بشهادة الاختبار.
+    3. قبول الشهادة عندما تكون موثوقة واسم المضيف مطابقًا.
+    """
+
+    certificate_pem = """-----BEGIN CERTIFICATE-----
+MIIDCzCCAfOgAwIBAgICEAAwDQYJKoZIhvcNAQELBQAwFDESMBAGA1UEAwwJbG9j
+YWxob3N0MB4XDTIwMDEwMTAwMDAwMFoXDTM2MDEwMTAwMDAwMFowFDESMBAGA1UE
+AwwJbG9jYWxob3N0MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA2leY
+xkZMuchIpyzc953sv0E1qForPEpyY4i432+ry666w/+yv7/Kr4XG2IKbKmjAElG0
+IpmYcF8o1gCAwMVjFA7gtMFfz3RlS3DJ/2aVHx8ozCSgm7fGW9A1SNmxYldBMkJB
+vDq3//m9FR+kLgTsdxjfayFQTGWKzC9X6YgZEElmVvGQ67SwZekndLPZFT8SV+v5
+nkVL2gdANlkZ7Rp35Cj8ZERTZuPgk+8S8Crp07pNrw/PcWMpTlX9SKc3J3lwr5Qy
+gzwBSpFMFN31Ea3SJtFj9HX7ddqNyOalFh1XJGE4kNvCOFRyzo0UH1vr3qd56dPH
+hLscsXe3w6KqmxeytwIDAQABo2cwZTAMBgNVHRMBAf8EAjAAMAsGA1UdDwQEAwIF
+oDATBgNVHSUEDDAKBggrBgEFBQcDATAUBgNVHREEDTALgglsb2NhbGhvc3QwHQYD
+VR0OBBYEFAMGvDlavS92hhU2RBUVwGAh5jpIMA0GCSqGSIb3DQEBCwUAA4IBAQBL
+ttcb8xbERUKt4ZL9bmhJiS2YhaNO+bTY4eWoBHWn6v+90oqF20wnhMMlYDrFt70b
+aDaIvYxnbggtoq/nEmLAst2Ifu9Qrw3fS4PaEfzu0LzcxCXe4Hnovwoz42iqyYwf
+eYCuBWo0QGVtFqnLpfA5ZnR7f9y8gR3tTgihJ0qj4TiwCBMB8XFYcmhPnIn1sUY6
+cdScMV6zKObs2tCHyEtMQxjFbNMakkd9LYrQK2B0/RcPq4cDLbHbkQD2gFkp70kD
+YLdntk79vtX9EL9GFxLqdRXFxF+6D3xwHOnSihyAUV4MUV1OKFPcIQLBS7kqjZ7b
+l1DCEvrGt6qinS4NTd73
+-----END CERTIFICATE-----"""
+
+    private_key_pem = """-----BEGIN PRIVATE KEY-----
+MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDaV5jGRky5yEin
+LNz3ney/QTWoWis8SnJjiLjfb6vLrrrD/7K/v8qvhcbYgpsqaMASUbQimZhwXyjW
+AIDAxWMUDuC0wV/PdGVLcMn/ZpUfHyjMJKCbt8Zb0DVI2bFiV0EyQkG8Orf/+b0V
+H6QuBOx3GN9rIVBMZYrML1fpiBkQSWZW8ZDrtLBl6Sd0s9kVPxJX6/meRUvaB0A2
+WRntGnfkKPxkRFNm4+CT7xLwKunTuk2vD89xYylOVf1IpzcneXCvlDKDPAFKkUwU
+3fURrdIm0WP0dft12o3I5qUWHVckYTiQ28I4VHLOjRQfW+vep3np08eEuxyxd7fD
+oqqbF7K3AgMBAAECggEALku0kRYG3r2g6hGRKM/LiyIAhpnX4QjICGLNEFNVUfLS
+lwx4kj/QcjcjWnUXAX8Eet3oHA4FTI5g0j95DWbNA0vESY9XCV3cvIpFymmt5NNu
+ixqZE2t8G6uiILhH7Foj8MwrtAWfTh9eAESdQ0S3/ui/Nq/xnsFJFNJVCadZ6SHC
+0lzaGSP5jwVpeeGtn7oN/KeKErxOnKYFOkff62XIvzu++XrLKSAX8KpJ1O7umd1y
+RIyGa/oRiqNwAWmQP3KyhWfNoeyff/+UbZNJHhUe1WXmKQzP97d+KS/LCbE9d3qT
+uSkut2525Dmudpu4ZInhr3zCHx9h7McrtloSnVnPAQKBgQDw1OXHET1hBZTeZ+Wx
+Cump7YSmrlgtS049xB/DM0xI2rVW50ICWYBHooTX8hVGKyIinzr2k8OB9dIrhluF
+A8yBa2dVgWd33x9XDPf2dNE35eeQadvbiPMriw0rKnObqS7SKb26f7GMhidA4NW0
+9E2cegmZcAHVsrsAnITgnWVOBwKBgQDoGBXgJRN71Hvr6yT5AAXdT+ux9KwZh2pr
+0VZ6xhSOJv4R3TdJwio/LJ7yWSbRVPR/6pD/UqJ/6I+1X1/bPWmxXVWhunTcT0/6
+Y5MLHWj3NEyBeEWoK0F47PmsvU6E7+vko5mvSBbrPoNAcqghZKKOal2H6V28FgDL
+1Os4PgVJ0QKBgFJH+sV7n2Phm04tYy2M0+6JxvOHx3qaKv4xXsS7ZwnRJ3msg0H4
+QDq5TPfWruwNWplHm8aZD4f8a7URL32PobRp9KEjGC29XqDIPoPGv6CAfRA7CrHD
+5Yjv9izUUTFSqTuGpVrtu8SOJSUma/1qJoYar+LrgMT5TqjT0RZI0E7LAoGBAMeo
+gJkUDBDIl9o5rNKvnFvodr/d1XcYsQoTSavQXrpy/LntbbR73c/+2LVu0B/gT30D
+Er0yHyydqZLDezilOhkkS5gXSJSFfi3OHx6+rB+M1AvEpVen7mjSo25gY/2kT2+e
+9YR+JYk1e7+jYtNnORf+lHto3AQDgafXgIofgHkhAoGBAOv6lvK6SBTNJU0g/mtA
+qeCQOYmGyIBaEzpOX3EuDmK2BNNOjMAeLYzO7la1rAVkQvB7TakGijBH031lOQHM
+r/tMQQkY72O0hZ8ytX+NR6OWQuTWY9LdcqU6Ssfsao/muao4zWltmIbGcGPzIFTh
+Sydvx0FeNWmqPBhmlaj0SqH0
+-----END PRIVATE KEY-----"""
+
+    certificate_path = tmp_path / "localhost-cert.pem"
+    key_path = tmp_path / "localhost-key.pem"
+
+    certificate_path.write_text(certificate_pem, encoding="ascii")
+    key_path.write_text(private_key_pem, encoding="ascii")
+
+    requests_seen = {"count": 0}
+
+    class TestHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            requests_seen["count"] += 1
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"ok")
+
+        def log_message(self, *_args):
+            pass
+
+    tls_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    tls_context.load_cert_chain(
+        certfile=str(certificate_path),
+        keyfile=str(key_path),
+    )
+
+    class TLSTestServer(HTTPServer):
+        def get_request(self):
+            raw_socket, client_address = super().get_request()
+            try:
+                tls_socket = tls_context.wrap_socket(
+                    raw_socket,
+                    server_side=True,
+                )
+                return tls_socket, client_address
+            except OSError:
+                raw_socket.close()
+                raise
+
+    server = TLSTestServer(("127.0.0.1", 0), TestHandler)
+    server_thread = Thread(
+        target=server.serve_forever,
+        daemon=True,
+    )
+    server_thread.start()
+
+    session = requests.Session()
+    session.trust_env = False
+    session.mount("https://", PinnedIPAdapter("localhost"))
+
+    hostname_session = requests.Session()
+    hostname_session.trust_env = False
+    hostname_session.mount(
+        "https://",
+        PinnedIPAdapter("wrong.example"),
+    )
+
+    matching_session = requests.Session()
+    matching_session.trust_env = False
+    matching_session.mount(
+        "https://",
+        PinnedIPAdapter("localhost"),
+    )
+
+    try:
+        # الحالة الأولى: الشهادة الذاتية التوقيع غير موثوقة.
+        with pytest.raises(requests.exceptions.SSLError):
+            session.get(
+                f"https://127.0.0.1:{server.server_port}/",
+                verify=True,
+                timeout=(2, 2),
+                allow_redirects=False,
+                stream=True,
+            )
+
+        assert requests_seen["count"] == 0
+
+        # الحالة الثانية: الشهادة موثوقة، لكن اسم المضيف لا يطابقها.
+        with pytest.raises(requests.exceptions.SSLError) as exc_info:
+            hostname_session.get(
+                f"https://127.0.0.1:{server.server_port}/",
+                headers={"Host": "wrong.example"},
+                verify=str(certificate_path),
+                timeout=(2, 2),
+                allow_redirects=False,
+                stream=True,
+            )
+
+        error_text = str(exc_info.value).lower()
+
+        assert (
+            "hostname" in error_text
+            or "doesn't match" in error_text
+            or "not valid for" in error_text
+        ), (
+            "لم يكن الخطأ بسبب عدم تطابق اسم المضيف: "
+            f"{exc_info.value}"
+        )
+
+        assert requests_seen["count"] == 0
+
+        # الحالة الثالثة: الشهادة موثوقة واسم المضيف مطابق.
+        response = matching_session.get(
+            f"https://127.0.0.1:{server.server_port}/",
+            headers={"Host": "localhost"},
+            verify=str(certificate_path),
+            timeout=(2, 2),
+            allow_redirects=False,
+            stream=True,
+        )
+
+        try:
+            assert response.status_code == 200
+            assert response.content == b"ok"
+        finally:
+            response.close()
+
+        assert requests_seen["count"] == 1
+
+    finally:
+        session.close()
+        hostname_session.close()
+        matching_session.close()
+        server.shutdown()
+        server.server_close()
+        server_thread.join(timeout=2)

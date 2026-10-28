@@ -1,448 +1,390 @@
 ﻿# CyberShield Security Policy
 
-**Project:** CyberShield — Project 1
-**Document version:** 1.1
-**Status:** Development policy; implementation review required
-**Scope:** Authorized website security assessment
-
-## 1. Purpose
-
-This document defines the security requirements for the CyberShield
-scanner, Flask API, and their network interactions.
-
-It distinguishes required security controls from controls that have
-been implemented and tested.
-
-A written policy or passing unit tests alone do not prove that the
-application is secure.
-
-The scanner must not be exposed as a public service until its target
-policy, connection behavior, resource limits, and security tests
-have been reviewed.
-
-## 2. Authorized Scanning
-
-- Scan only websites owned by the user or covered by explicit,
-  appropriate authorization.
-- Require the user to confirm authorization before submitting a scan.
-- Treat authorization confirmation as an acknowledgement, not as
-  a technical security control.
-- Reject targets that violate the server-side target policy.
-- Do not request, store, or transmit login credentials.
-- Do not perform password guessing, login attempts, or exploit testing.
-- Do not crawl websites or discover additional targets in Project 1.
-- Limit the scanner to the five agreed checks.
-- Do not describe a website as completely secure based on these checks.
-
-## 3. URL Validation
-
-The target URL must be validated by the server before a network request.
-
-The current Project 1 policy is:
-
-- Accept HTTPS URLs only.
-- Allow only the default HTTPS port or explicit port 443.
-- Reject user information embedded in URLs, including usernames
-  and passwords.
-- Reject malformed URLs, unsupported ports, control characters,
-  and ambiguous URL forms.
-- Reject localhost and disallowed internal hostnames.
-- Normalize and validate hostnames before resolving them.
-- Apply the same destination policy to IPv4 and IPv6.
-- Reject a target if any resolved address is not permitted.
-- Treat DNS failures, empty DNS results, and excessive DNS results
-  as reasons to reject the target.
-
-URL syntax validation alone does not establish that a target is safe.
-
-## 4. Server-Side Request Forgery (SSRF) Protection
-
-SSRF prevention is a critical requirement.
-
-### 4.1 Disallowed destinations
-
-The target policy must block, at minimum:
-
-- IPv4 loopback addresses.
-- IPv6 loopback addresses.
-- Private IPv4 networks.
-- IPv6 unique-local addresses.
-- Link-local addresses.
-- Unspecified and multicast addresses.
-- Other non-global or special-purpose addresses prohibited
-  by the project's network policy.
-- Local and internal hostnames.
-- Cloud metadata services and their known hostnames.
-- Internal service endpoints that must not be reachable by the scanner.
-
-Examples of addresses that must be rejected include:
-
-- `127.0.0.1`
-- `10.0.0.1`
-- `172.16.0.1`
-- `192.168.1.1`
-- `169.254.169.254`
-- `::1`
-- `fc00::1`
-- `fe80::1`
-
-This list is illustrative, not exhaustive.
-
-### 4.2 DNS validation and connection pinning
-
-The scanner must validate DNS results before connecting.
-
-It must also guarantee that the actual network connection uses an
-address that passed the target policy.
-
-A DNS lookup followed by an independent, unchecked lookup by the HTTP
-client is insufficient because the address can change between
-validation and connection.
-
-The connection implementation must:
-
-- Connect only to a validated destination IP.
-- Preserve the original hostname for the HTTP Host header.
-- Preserve appropriate TLS SNI and hostname certificate verification.
-- Keep certificate verification enabled.
-- Ensure retries and fallback connections cannot bypass target policy.
-
-The implementation must be verified by tests that establish which
-destination address the connection actually uses.
-
-If this guarantee cannot be established, arbitrary user-supplied
-targets must not be scanned by the deployed service.
-
-### 4.3 Defense in depth
-
-Application-level validation is not the only required defense.
-
-Before deployment beyond controlled development, review network-level
-restrictions that prevent the scanner from reaching sensitive internal
-services and metadata endpoints.
-
-## 5. HTTP and TLS Security
-
-- Keep TLS certificate verification enabled.
-- Never use `verify=False` in application scanning code.
-- Use HTTPS only for target requests in the initial implementation.
-- Use the approved HTTPS port.
-- Do not automatically follow redirects.
-- Do not send authentication credentials to target websites.
-- Do not inherit unexpected proxy configuration from the environment.
-- Do not retry a request through an unvalidated destination.
-- Treat TLS verification failures as unsuccessful TLS checks.
-
-A successful HTTPS connection means only that the specific connection
-check passed. It does not prove that the website is free of
-vulnerabilities.
-
-## 6. Redirect Handling
-
-The initial implementation must not follow redirects automatically.
-
-A redirect response may be recorded, but it must not be treated as
-permission to contact the destination.
-
-If redirect checking is added in the future:
-
-1. Parse the Location value safely.
-2. Resolve relative destinations correctly.
-3. Validate the destination URL independently.
-4. Resolve and validate its destination addresses.
-5. Ensure the connection uses a validated address.
-6. Reject internal, private, link-local, and other disallowed targets.
-7. Enforce a small maximum redirect count.
-8. Detect redirect loops.
-9. Keep TLS verification enabled for HTTPS destinations.
-
-Every redirect destination must pass the policy before a new request.
-
-## 7. Network and Resource Limits
-
-### 7.1 Timeouts
-
-The scanner configures an HTTP connection timeout of 3 seconds
-and a read timeout of 5 seconds.
-
-DNS resolution is performed in a bounded background worker with
-a 2-second wait limit and a maximum of four concurrent lookups.
-
-When the wait limit expires, the target is rejected. However, the
-underlying getaddrinfo operation cannot be forcibly cancelled by
-this timeout wrapper. A timed-out DNS operation may continue in
-the background and retain a lookup slot until it finishes.
-
-These settings do not guarantee a maximum duration for the entire
-scan. The DNS timeout test currently uses a simulated slow lookup;
-real operating-system DNS behavior still requires controlled
-integration testing.
-
-A total scan deadline and further resource controls must be
-evaluated before deployment.
-
-### 7.2 Response handling
-
-The scanner needs response headers for the agreed checks; it does not
-need to download an entire web page.
-
-The implementation should:
-
-- Avoid reading response bodies unless strictly necessary.
-- Close responses and sessions reliably.
-- Bound response resources, including headers and any data read.
-- Avoid processing large or unnecessary response bodies.
-- Handle malformed or incomplete responses safely.
-
-The current implementation uses streaming and closes responses
-without intentionally reading the response body. Explicit maximum
-resource limits still require review and testing.
-
-### 7.3 Request volume
-
-Before deployment, define and enforce:
-
-- A maximum number of concurrent scans.
-- A request rate limit appropriate to the deployment.
-- A maximum total duration for a scan.
-- Appropriate connection resource limits.
-
-These controls must not be described as implemented until they exist
-in the application or its deployment environment and have been tested.
-
-## 8. Reporting and Result Accuracy
-
-Each finding must use the agreed result model:
-
-- `check_id`
-- `title`
-- `status`
-- `severity`
-- `confidence`
-- `evidence`
-- `explanation`
-- `recommendation`
-- `limitations`
-
-Allowed statuses:
-
-- `passed`: The specific check passed according to its documented rule.
-- `warning`: An observation requires review.
-- `not_verified`: Evidence is insufficient to establish the result.
-- `error`: The check failed during execution or processing.
-- `skipped`: The check was intentionally not executed because of
-  a defined constraint.
-
-Severity values:
-
-- `info`
-- `low`
-- `medium`
-- `high`
-
-Confidence values:
-
-- `low`
-- `medium`
-- `high`
-
-Rules:
-
-- Missing evidence must never be reported as `passed`.
-- An unsuccessful connection must not cause response headers to be
-  reported as missing.
-- Distinguish between a failed check and a check that could not be run.
-- A present header does not prove its complete configuration is secure.
-- Recommendations must be relevant to the evidence collected.
-- Findings must describe only the response and checks actually examined.
-- Explain limitations that materially affect the conclusion.
-- Do not claim that CyberShield performs a complete penetration test.
-
-## 9. Security Header Rules
+## 1. Purpose and Security Boundaries
+
+CyberShield performs a limited, preliminary assessment of selected
+HTTPS security indicators for a website that the user is authorized
+to assess.
 
 The initial scanner checks:
 
-1. `https_connection`
-2. `header_hsts`
-3. `header_csp`
-4. `header_x_content_type_options`
-5. `header_x_frame_options`
+1. HTTPS connection and TLS certificate validation.
+2. HTTP Strict Transport Security (HSTS).
+3. Content Security Policy (CSP).
+4. X-Content-Type-Options.
+5. X-Frame-Options.
 
-### HSTS
+CyberShield is not a full penetration-testing platform, vulnerability
+scanner, or guarantee that a website is secure.
 
-Check for the presence of Strict-Transport-Security and validate
-the basic max-age rule documented by the scanner.
+A successful result for an individual check means only that the
+specific condition tested by that check was observed. It must not
+be presented as proof that the entire website is secure.
 
-Do not assume every site requires identical optional directives.
+## 2. Authorized Use
 
-### CSP
+The scanner must only be used against websites that the user owns
+or has explicit permission to assess.
 
-Check for the enforced Content-Security-Policy header.
+The application's authorization confirmation expresses the user's
+claim that they have permission. It does not independently prove
+ownership or authorization.
 
-Distinguish it from Content-Security-Policy-Report-Only.
+The scanner must not:
 
-The initial implementation must not claim that a policy is effective
-or strong merely because a header is present.
+- Attempt to guess, discover, or reuse passwords.
+- Perform repeated login attempts.
+- Request or collect passwords, session tokens, or other login
+  credentials.
+- Attempt to exploit vulnerabilities or modify the target website.
+- Perform destructive tests, denial-of-service tests, or unrestricted
+  crawling.
+- Access internal services or protected infrastructure through a
+  user-supplied URL.
+- Claim that a target is fully secure based on the limited checks.
 
-### X-Content-Type-Options
+Only the explicitly implemented checks are within the initial
+project scope.
 
-Check for the expected `nosniff` value.
+## 3. URL and Target Validation
 
-### X-Frame-Options
+Before making an HTTP request, the backend must validate the target.
 
-Check the supported `DENY` and `SAMEORIGIN` values.
+The initial implementation applies the following restrictions:
 
-Interpret missing headers as observations requiring context, not
-as proof of a confirmed vulnerability.
+- Only the HTTPS scheme is accepted.
+- Only TCP port 443 is accepted.
+- URLs containing username or password components are rejected.
+- Localhost names and their subdomains are rejected.
+- Invalid or unsupported hostnames are rejected.
+- DNS results must contain supported IPv4 or IPv6 addresses.
+- Targets are rejected if DNS resolution fails, produces no usable
+  addresses, or returns more than the configured address limit.
+- All returned addresses must pass the public-address policy.
+- A target must not be requested when any resolved address violates
+  that policy.
 
-A suitable Content Security Policy using frame-ancestors may affect
-how framing protections should be assessed.
+These checks help reduce server-side request forgery (SSRF) risk.
+They do not replace network-level egress restrictions or deployment
+security controls.
 
-## 10. Error Handling and Logging
+## 4. SSRF and Network Destination Protections
 
-- Return structured API error responses.
-- Do not expose stack traces, internal paths, secrets, or sensitive
-  implementation details to API clients.
-- Log only information needed for safe diagnosis.
-- Avoid logging credentials, session tokens, or full URLs containing
-  sensitive query parameters.
-- Sanitize untrusted data before including it in log messages.
-- Distinguish invalid targets, TLS failures, DNS failures, timeouts,
-  and other connection errors where possible.
-- Never turn an exception into a successful finding.
-- Avoid storing scan reports unless a documented requirement exists.
+### 4.1 Restricted destinations
 
-The initial project does not require a database or scan history.
+The scanner must not connect to loopback, private, link-local,
+or other non-public IP addresses.
 
-## 11. API Security
+It must reject addresses associated with internal or special-purpose
+destinations, including cloud metadata and internal services.
 
-The Flask API must:
+IPv4 and IPv6 addresses must be checked. IPv4-mapped IPv6 addresses
+and relevant IPv6 transition or translation ranges must also be
+considered so that an address cannot bypass the destination policy
+by using an alternate representation.
 
-- Validate JSON request structure and field types.
-- Require `target_url` and `authorization_confirmed`.
-- Reject unsupported or malformed target URLs.
-- Apply target policy before making a target request.
-- Return a consistent error structure.
-- Limit request body size.
-- Avoid leaking internal exceptions in client responses.
+The implementation uses Python IP address classification and
+additional explicit network restrictions.
 
-The current API configures a request body size limit. Rate limiting,
-concurrency limits, and the deployed network policy require separate
-implementation or deployment controls.
+### 4.2 DNS resolution
 
-The local development server is for development only and must not
-be treated as a production deployment.
+The hostname is resolved before the HTTP connection is made.
 
-## 12. Privacy
+The current implementation uses:
 
-- Do not request website account credentials.
-- Do not store cookies, session tokens, or target authentication data.
-- Do not persist scan history in Project 1.
-- Do not collect more information than required for the assessment.
-- Avoid exposing sensitive URL components in reports or logs.
-- Return only the information required by the agreed report schema.
+- A maximum DNS wait time of 2 seconds.
+- A maximum of four concurrent DNS lookup slots.
+- A maximum of 32 returned addresses for a target.
 
-## 13. Required Security Tests
+If the DNS lookup exceeds the wait limit, the target is rejected.
+If the lookup fails or returns an unacceptable result, the scanner
+must not continue with the HTTP request.
 
-Security tests must include both mocked unit tests and controlled
-integration tests where appropriate.
+The timeout wrapper cannot forcibly cancel an operating-system
+`getaddrinfo` operation. A DNS lookup that exceeds the wait limit
+may continue in the background and hold its lookup slot until it
+finishes.
 
-Required cases include:
+Consequently, the DNS timeout limits how long the caller waits;
+it does not guarantee that the underlying operating-system lookup
+will stop after 2 seconds.
 
-- Reject HTTP and unsupported schemes.
-- Reject credentials embedded in URLs.
-- Reject unsupported ports.
-- Reject localhost and loopback addresses.
-- Reject private, link-local, and prohibited IPv6 addresses.
-- Reject mixed DNS results containing permitted and prohibited IPs.
-- Reject DNS resolution failures.
-- Verify the actual connection uses a validated address.
-- Verify TLS hostname and certificate validation.
-- Verify that a TLS error cannot produce a passed result.
-- Verify that redirects are not followed automatically.
-- Verify that any future redirect destination is checked before access.
-- Test timeouts and connection failures.
-- Test malformed and incomplete responses.
-- Verify responses and sessions are closed.
-- Test limits on request size and response resources.
-- Verify exceptions do not reveal internal details to API clients.
-- Verify unavailable header checks are not falsely reported as passed.
+### 4.3 Connection pinning
 
-Mocked tests prove the behavior of the mocked scenario; they do not
-prove the real network connection is safe.
+After target validation, the scanner connects to a validated IP
+address instead of resolving the original hostname again for the
+HTTP connection.
 
-## 14. Current Implementation Status
+The original hostname must still be used for the HTTP Host header
+and TLS hostname verification, including Server Name Indication
+(SNI) where applicable.
 
-The following items have been implemented or observed during development:
+TLS certificate validation must remain enabled.
 
-- HTTPS-only URL validation.
-- Restriction to the default HTTPS port or port 443.
-- Rejection of URLs containing credentials.
-- DNS validation that rejects non-global resolved addresses.
-- A request configured with TLS verification enabled.
-- Automatic redirect handling disabled.
+This approach helps prevent a second DNS resolution from directing
+the actual connection to a different address after validation.
+It does not eliminate every possible network-level SSRF risk.
 
-These implementation observations do not independently prove that
-the actual network connection always uses the validated destination
-IP or that every DNS rebinding scenario is prevented. These properties
-remain subject to controlled integration testing and security review.
-- Connection and read timeouts configured.
-- Streaming responses that are closed without intentionally
-  reading their bodies.
-- Unit tests for target validation, selected SSRF cases, redirects,
-  TLS error handling, reporting, and API behavior.
-- A manual successful request to `https://example.com`.
-- A manual API rejection of `https://127.0.0.1`.
+### 4.4 Redirects
 
-The following items remain to be verified or implemented:
+Automatic HTTP redirects are disabled.
 
-- Robust proof that the actual connected IP is the validated IP
-  while preserving TLS hostname verification.
-- Explicit handling of all prohibited metadata hostnames.
-- Controlled integration tests for real TLS certificate failures.
-- DNS failure, timeout, and additional IPv4/IPv6 edge cases.
-- A total scan deadline.
-- Explicit resource limits and tests appropriate to deployment.
-- Concurrency and request rate limiting.
-- A review of safe logging and sensitive URL handling.
-- A complete security review of the connection implementation.
+The scanner must not follow a redirect to another hostname, IP
+address, port, or internal destination without validating the new
+destination under the same policy.
 
-Passing the current test suite does not resolve these remaining items.
+The initial implementation does not follow redirects. A redirect
+response must not be treated as evidence that the destination
+behind the redirect was checked.
 
-## 15. Development and Release Rules
+## 5. HTTPS and TLS Requirements
 
-- Keep the scanner in controlled development while critical network
-  safety checks remain unverified.
-- Do not expose arbitrary target scanning to the public internet
-  before completing the required security review.
-- Do not introduce extra scanning features outside Project 1 scope.
-- Review security-sensitive changes before merging them.
-- Run the automated test suite after relevant changes.
-- Update this policy when security behavior changes.
-- Coordinate API contract changes with the Flutter and Flask owners.
-- Record known limitations rather than claiming unverified controls
-  are complete.
+The scanner must:
 
-## 16. References
+- Accept HTTPS URLs only.
+- Keep TLS certificate verification enabled.
+- Reject connections with invalid or untrusted certificates.
+- Verify that the certificate hostname matches the original
+  requested hostname.
+- Preserve the original hostname for TLS verification when
+  connecting to a validated IP address.
+- Never retry a failed HTTPS connection using plain HTTP.
+- Avoid disabling certificate verification to make a scan succeed.
 
-OWASP Server Side Request Forgery Prevention Cheat Sheet:
-https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html
+A TLS failure must not be reported as a successful HTTPS check.
 
-Requests API documentation:
-https://requests.readthedocs.io/en/stable/api/
+The presence of HTTPS alone does not prove that every aspect of
+the target's TLS configuration is secure.
 
-Requests Quickstart — redirects and timeouts:
-https://requests.readthedocs.io/en/stable/user/quickstart/
+## 6. HTTP Request and Response Handling
 
-## 17. Review Checklist
+The scanner uses Python Requests to make the HTTP request.
 
-- [ ] Target policy reviewed.
-- [ ] Actual destination IP behavior verified.
-- [ ] TLS hostname and certificate validation verified.
-- [ ] Redirect behavior verified.
-- [ ] Resource limits reviewed.
-- [ ] Logging and privacy reviewed.
-- [ ] Required security tests reviewed.
-- [ ] API error handling reviewed.
-- [ ] Known gaps documented.
-- [ ] Changes reviewed by the team before deployment.
+The current implementation applies:
+
+- Connection timeout: 3 seconds.
+- Read timeout: 5 seconds.
+- Automatic redirects disabled.
+- Streaming response handling.
+- Explicit response closure.
+- Explicit HTTP session closure.
+
+The scanner examines the relevant response status and security
+headers. It does not need to download or execute the target's
+page content for the initial checks.
+
+The response body is not intentionally consumed by the scanner.
+Response and session resources must be closed after use, including
+when an error occurs.
+
+The connection and read timeouts do not guarantee a fixed maximum
+duration for an entire scan. DNS processing and other operations
+must also be considered when evaluating total execution time.
+
+## 7. Resource Limits and Request Capacity
+
+### 7.1 DNS and HTTP timeouts
+
+DNS resolution has a 2-second caller wait limit and a maximum
+of four concurrent lookup slots.
+
+The HTTP request uses a 3-second connection timeout and a
+5-second read timeout.
+
+The DNS timeout test currently uses a simulated slow DNS lookup.
+Controlled integration testing is still needed to characterize
+real operating-system DNS behavior.
+
+These individual timeout settings do not constitute a complete
+end-to-end scan deadline.
+
+### 7.2 Concurrent scans
+
+The Flask API currently limits the number of active scans to
+four per Python process.
+
+The capacity limit is implemented with a bounded semaphore.
+If all scan slots are occupied, a new scan request is rejected
+without starting target resolution or scanning.
+
+The API returns:
+
+- HTTP status: `503`
+- Error code: `SCAN_CAPACITY_EXCEEDED`
+
+The client may retry later.
+
+This is a per-process limit. If the service is deployed with
+multiple worker processes or multiple application instances,
+each process may have its own limit. The current semaphore
+does not enforce a single shared limit across all processes
+or instances.
+
+### 7.3 Remaining resource controls
+
+The following controls still require evaluation or separate
+implementation before deployment:
+
+- Request-rate limiting.
+- A reliable end-to-end scan deadline.
+- Capacity limits shared across multiple workers or instances,
+  if applicable.
+- Appropriate worker, connection, and operating-system limits.
+- Network-level egress restrictions.
+- Monitoring for repeated rejected requests or resource exhaustion.
+
+The application must not be considered production-ready merely
+because the per-process concurrency limit is implemented.
+
+## 8. Error Handling and Logging
+
+The API must return predictable JSON error responses and must not
+expose internal stack traces, filesystem paths, secrets, or other
+implementation details to clients.
+
+Expected API error categories include:
+
+- `400 INVALID_REQUEST`: request data is invalid.
+- `403 AUTHORIZATION_REQUIRED`: authorization confirmation is
+  missing or insufficient for the API's request rules.
+- `403 TARGET_NOT_ALLOWED`: the target violates the destination
+  policy or is otherwise not permitted.
+- `413 REQUEST_TOO_LARGE`: the request exceeds the configured
+  request-size limit.
+- `503 SCAN_CAPACITY_EXCEEDED`: the active scan capacity is full.
+- `500 INTERNAL_ERROR`: an unexpected server-side failure occurred.
+
+The exact response body and status code must remain consistent
+with the API contract.
+
+Unexpected scan failures must not be logged with full exception
+details if doing so could expose sensitive target information.
+Logs must not contain passwords, session tokens, or other secrets.
+
+Security-relevant failures should be recorded at an appropriate
+level without unnecessarily exposing sensitive data.
+
+## 9. Data Minimization and Privacy
+
+The initial version does not use a database and does not persist
+scan history.
+
+The scanner must not collect authentication credentials or
+intentionally retrieve a website's complete page content.
+
+Report target URLs must be sanitized before being included in
+the report. The current report sanitization removes URL credentials,
+query strings, and fragments from the displayed target URL.
+
+This report sanitization does not mean the query string is removed
+from the outgoing HTTP request. The request may still send the
+provided target path and query to the remote server.
+
+Users should therefore avoid placing passwords, access tokens,
+or other secrets in the URL.
+
+URL paths may also contain sensitive information and should not
+be treated as automatically safe to display or log.
+
+Any future database, history, or centralized logging feature must
+define access control, data minimization, retention, and deletion
+requirements before implementation.
+
+## 10. Finding Statuses and Reporting Rules
+
+Each report finding must describe only what the corresponding
+check actually established.
+
+The supported finding statuses are:
+
+- `passed`: the specific tested condition was observed.
+- `warning`: the result indicates a condition that needs review.
+- `not_verified`: there is insufficient evidence to establish the
+  condition.
+- `error`: the check could not be completed because of an error.
+- `skipped`: the check was not run due to a defined constraint.
+
+A failed connection or unavailable response must not cause every
+security-header check to be marked as passed.
+
+When there is insufficient evidence, the result must not be
+converted into `passed`.
+
+Findings should provide appropriate evidence, explanations,
+recommendations, severity, confidence, and limitations where
+applicable.
+
+The report must clearly state that it represents a limited,
+preliminary assessment.
+
+## 11. Testing and Verification
+
+Automated tests should cover at least:
+
+- Request validation and malformed input.
+- Missing authorization confirmation.
+- Disallowed schemes and ports.
+- URLs containing credentials.
+- Localhost and prohibited IP addresses.
+- IPv4, IPv6, and relevant special-purpose address cases.
+- DNS failures, empty results, excessive results, and timeouts.
+- Connection pinning and hostname verification.
+- TLS certificate validation, including untrusted certificates.
+- Redirect behavior.
+- Security-header interpretation.
+- Response and session cleanup.
+- API error responses.
+- Scan-capacity rejection and permit release.
+- Report sanitization and finding statuses.
+
+Tests using mocks verify the behavior represented by those mocks.
+They do not independently prove the security of every real network
+environment.
+
+Local TLS tests provide useful regression coverage, but do not
+replace controlled integration testing or a deployment security
+review.
+
+DNS timeout tests that simulate a slow lookup must not be treated
+as proof that the operating system can forcibly cancel a real
+DNS lookup.
+
+## 12. Deployment Requirements and Limitations
+
+The development server is intended for local use and binds to
+`127.0.0.1` with debug mode disabled.
+
+The development server must not be exposed directly as a
+production service.
+
+Before deployment, the team must review:
+
+- Production-grade Flask hosting and server configuration.
+- TLS termination and transport protection for the mobile-to-API
+  connection.
+- Authentication, authorization, and access controls appropriate
+  to the deployment.
+- Request-rate limiting.
+- Total scan deadlines and resource exhaustion protections.
+- Network-level egress filtering and isolation.
+- Shared concurrency controls where multiple workers are used.
+- Secret management and logging practices.
+- Monitoring, alerting, and operational response.
+- Tests in a controlled environment representative of deployment.
+
+A local test suite passing does not demonstrate that the application
+is ready for public deployment.
+
+## 13. Security Policy Maintenance
+
+Changes to URL validation, DNS handling, connection behavior,
+TLS verification, timeouts, concurrency controls, error responses,
+or report interpretation must be accompanied by appropriate
+regression tests and documentation updates.
+
+The API contract, security policy, implementation, and tests must
+describe consistent behavior.
+
+Any control that is documented as required but has not been
+implemented or verified must be clearly identified as a limitation
+or outstanding deployment task.

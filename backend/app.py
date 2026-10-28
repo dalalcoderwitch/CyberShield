@@ -1,7 +1,14 @@
+from threading import BoundedSemaphore
+
 from flask import Flask, jsonify, request
 
 from backend.scanner import scan_target
 from security_scanner.scanner import resolve_target
+
+
+# حد لكل عملية Python، وليس حدًا موزعًا بين عدة عمليات خادم.
+_MAX_CONCURRENT_SCANS = 4
+_SCAN_SLOTS = BoundedSemaphore(_MAX_CONCURRENT_SCANS)
 
 
 def create_app():
@@ -59,8 +66,20 @@ def create_app():
                 }
             }), 403
 
+        # رفض الطلب الجديد إذا امتلأت سعة الفحص.
+        if not _SCAN_SLOTS.acquire(blocking=False):
+            return jsonify({
+                "error": {
+                    "code": "SCAN_CAPACITY_EXCEEDED",
+                    "message": (
+                        "عدد عمليات الفحص النشطة بلغ الحد المسموح. "
+                        "أعيدي المحاولة لاحقًا."
+                    ),
+                }
+            }), 503
+
         try:
-            # التحقق من الهدف وحل DNS مرة واحدة في مسار API.
+            # التحقق من الهدف وحل DNS مرة واحدة.
             resolved_target = resolve_target(target_url)
 
             if resolved_target is None:
@@ -95,6 +114,10 @@ def create_app():
                     "message": "تعذر تنفيذ الفحص.",
                 }
             }), 500
+
+        finally:
+            # إعادة السعة في جميع المسارات، حتى عند حدوث خطأ.
+            _SCAN_SLOTS.release()
 
     @app.errorhandler(413)
     def request_too_large(_error):
