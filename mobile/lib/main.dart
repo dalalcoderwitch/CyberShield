@@ -1,4 +1,3 @@
-5
 import 'package:flutter/material.dart';
 
 void main() {
@@ -35,23 +34,16 @@ class CyberShieldApp extends StatelessWidget {
           ),
           enabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(14),
-            borderSide: const BorderSide(
-              color: Color(0xFF29364C),
-            ),
+            borderSide: const BorderSide(color: Color(0xFF29364C)),
           ),
           focusedBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(14),
-            borderSide: const BorderSide(
-              color: accentColor,
-            ),
+            borderSide: const BorderSide(color: accentColor),
           ),
         ),
       ),
       builder: (context, child) {
-        return Directionality(
-          textDirection: TextDirection.rtl,
-          child: child!,
-        );
+        return Directionality(textDirection: TextDirection.rtl, child: child!);
       },
       home: const HomeScreen(),
     );
@@ -66,8 +58,7 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  final TextEditingController _urlController =
-      TextEditingController();
+  final TextEditingController _urlController = TextEditingController();
 
   bool _authorizationConfirmed = false;
 
@@ -81,38 +72,30 @@ class _HomeScreenState extends State<HomeScreen> {
     final input = _urlController.text.trim();
     final uri = Uri.tryParse(input);
 
-    final validUrl = uri != null &&
+    final validUrl =
+        uri != null &&
         uri.scheme.toLowerCase() == 'https' &&
         uri.host.isNotEmpty &&
         uri.userInfo.isEmpty;
 
     if (!validUrl) {
-      _showMessage(
-        'أدخل رابط HTTPS صحيحاً، مثل https://example.com',
-      );
+      _showMessage('أدخل رابط HTTPS صحيحاً، مثل https://example.com');
       return;
     }
 
     if (!_authorizationConfirmed) {
-      _showMessage(
-        'يرجى تأكيد امتلاكك تصريحاً لفحص الموقع.',
-      );
+      _showMessage('يرجى تأكيد امتلاكك تصريحاً لفحص الموقع.');
       return;
     }
 
-    _showMessage(
-      'الواجهة جاهزة، وسيتم ربط محرك الفحص في الخطوة القادمة.',
-    );
+    _showMessage('الواجهة جاهزة، وسيتم ربط محرك الفحص في الخطوة القادمة.');
   }
 
   void _showMessage(String message) {
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(
-        SnackBar(
-          content: Text(message),
-          behavior: SnackBarBehavior.floating,
-        ),
+        SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
       );
   }
 
@@ -127,18 +110,9 @@ class _HomeScreenState extends State<HomeScreen> {
         titleSpacing: 20,
         title: const Row(
           children: [
-            Icon(
-              Icons.shield_outlined,
-              color: accent,
-              size: 30,
-            ),
+            Icon(Icons.shield_outlined, color: accent, size: 30),
             SizedBox(width: 10),
-            Text(
-              'CyberShield',
-              style: TextStyle(
-                fontWeight: FontWeight.bold,
-              ),
-            ),
+            Text('CyberShield', style: TextStyle(fontWeight: FontWeight.bold)),
           ],
         ),
       ),
@@ -147,9 +121,7 @@ class _HomeScreenState extends State<HomeScreen> {
           child: SingleChildScrollView(
             padding: const EdgeInsets.all(22),
             child: ConstrainedBox(
-              constraints: const BoxConstraints(
-                maxWidth: 560,
-              ),
+              constraints: const BoxConstraints(maxWidth: 560),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
@@ -158,9 +130,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     decoration: BoxDecoration(
                       color: const Color(0xFF151F32),
                       borderRadius: BorderRadius.circular(24),
-                      border: Border.all(
-                        color: const Color(0xFF29364C),
-                      ),
+                      border: Border.all(color: const Color(0xFF29364C)),
                     ),
                     child: Column(
                       children: [
@@ -233,20 +203,15 @@ class _HomeScreenState extends State<HomeScreen> {
                               value: _authorizationConfirmed,
                               onChanged: (value) {
                                 setState(() {
-                                  _authorizationConfirmed =
-                                      value ?? false;
+                                  _authorizationConfirmed = value ?? false;
                                 });
                               },
                               contentPadding: EdgeInsets.zero,
-                              controlAffinity:
-                                  ListTileControlAffinity.leading,
+                              controlAffinity: ListTileControlAffinity.leading,
                               activeColor: accent,
                               title: const Text(
                                 'أؤكد أن لدي تصريحاً بفحص هذا الموقع.',
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  height: 1.6,
-                                ),
+                                style: TextStyle(fontSize: 14, height: 1.6),
                               ),
                             ),
                           ),
@@ -267,8 +232,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             ),
                             style: FilledButton.styleFrom(
                               backgroundColor: accent,
-                              foregroundColor:
-                                  const Color(0xFF07151A),
+                              foregroundColor: const Color(0xFF07151A),
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(14),
                               ),
@@ -284,17 +248,12 @@ class _HomeScreenState extends State<HomeScreen> {
                     decoration: BoxDecoration(
                       color: const Color(0xFF332A19),
                       borderRadius: BorderRadius.circular(16),
-                      border: Border.all(
-                        color: const Color(0xFF66502B),
-                      ),
+                      border: Border.all(color: const Color(0xFF66502B)),
                     ),
                     child: const Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Icon(
-                          Icons.info_outline,
-                          color: Color(0xFFFFD27A),
-                        ),
+                        Icon(Icons.info_outline, color: Color(0xFFFFD27A)),
                         SizedBox(width: 12),
                         Expanded(
                           child: Text(
