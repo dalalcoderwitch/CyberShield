@@ -3,7 +3,8 @@ import socket
 from queue import Empty, Queue
 from threading import BoundedSemaphore, Thread
 from urllib.parse import urlparse, urlunsplit
-
+import time
+from urllib3.util import Timeout
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3 import PoolManager
@@ -29,7 +30,10 @@ _BLOCKED_IPV6_NETWORKS = tuple(
 )
 
 
-def _resolve_dns_with_timeout(hostname: str):
+def _resolve_dns_with_timeout(
+    hostname: str,
+    deadline: float | None = None,
+):
     """
     تنفيذ DNS بمهلة محددة وسعة متزامنة محدودة.
 
@@ -37,6 +41,13 @@ def _resolve_dns_with_timeout(hostname: str):
     المهلة، تُرفض العملية وتبقى خانتها مشغولة إلى أن تنتهي
     عملية DNS الخلفية. يمنع هذا إنشاء عدد غير محدود من العمال.
     """
+    timeout = _DNS_TIMEOUT_SECONDS
+    if deadline is not None:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return None
+        timeout = min(timeout, remaining)
+
     if not _DNS_LOOKUP_SLOTS.acquire(blocking=False):
         return None
 
@@ -72,7 +83,7 @@ def _resolve_dns_with_timeout(hostname: str):
         return None
 
     try:
-        return result_queue.get(timeout=_DNS_TIMEOUT_SECONDS)
+        return result_queue.get(timeout=timeout)
     except Empty:
         return None
 
@@ -80,12 +91,14 @@ def _resolve_dns_with_timeout(hostname: str):
 def _is_allowed_ip(
     ip: ipaddress.IPv4Address | ipaddress.IPv6Address,
 ) -> bool:
-    """رفض العناوين غير العالمية وأشكال IPv6 الانتقالية المختارة."""
+    """رفض العناوين غير العامة والعناوين الانتقالية المحظورة."""
 
-    if not ip.is_global:
+    # لا نسمح إلا بالعناوين العامة، مع رفض Multicast صراحةً.
+    if not ip.is_global or ip.is_multicast:
         return False
 
     if isinstance(ip, ipaddress.IPv6Address):
+        # رفض IPv4 المضمن وTeredo و6to4.
         if (
             ip.ipv4_mapped is not None
             or ip.teredo is not None
@@ -93,11 +106,11 @@ def _is_allowed_ip(
         ):
             return False
 
+        # رفض شبكات IPv6 الانتقالية المحظورة في سياسة المشروع.
         if any(ip in network for network in _BLOCKED_IPV6_NETWORKS):
             return False
 
     return True
-
 
 class PinnedIPAdapter(HTTPAdapter):
     """الاتصال بعنوان IP محدد مع التحقق من اسم الموقع عبر TLS."""
@@ -128,7 +141,7 @@ class PinnedIPAdapter(HTTPAdapter):
         )
 
 
-def _resolve_target(url: str):
+def _resolve_target(url: str, deadline: float | None = None):
     """
     التحقق من الرابط وحصر الاتصال بعناوين IP مسموحة.
     لا يرسل هذا الإجراء أي طلب HTTP.
@@ -180,7 +193,10 @@ def _resolve_target(url: str):
     if hostname == "localhost" or hostname.endswith(blocked_suffixes):
         return None
 
-    addresses = _resolve_dns_with_timeout(hostname)
+    if deadline is None:
+        addresses = _resolve_dns_with_timeout(hostname)
+    else:
+        addresses = _resolve_dns_with_timeout(hostname, deadline=deadline)
 
     if not addresses or len(addresses) > 32:
         return None
@@ -213,13 +229,15 @@ def _resolve_target(url: str):
     return parsed, hostname, public_ips
 
 
-def resolve_target(url: str):
+def resolve_target(url: str, deadline: float | None = None):
     """
     حل الرابط والتحقق منه مرة واحدة.
 
     تُمرر النتيجة إلى محرك الفحص لتجنب إعادة حل DNS.
     """
-    return _resolve_target(url)
+    if deadline is None:
+        return _resolve_target(url)
+    return _resolve_target(url, deadline=deadline)
 
 
 def validate_url(url: str) -> bool:
@@ -227,24 +245,43 @@ def validate_url(url: str) -> bool:
     return resolve_target(url) is not None
 
 
-def _safe_get_response(url: str, resolved_target=None):
+def _safe_get_response(
+    url: str,
+    resolved_target=None,
+    deadline: float | None = None,
+):
     """
     إرسال طلب HTTPS واحد إلى عنوان IP اجتاز سياسة الهدف.
 
     إذا مررت طبقة API نتيجة التحقق السابقة، يعاد استخدامها
     بدل إجراء عملية DNS جديدة.
     """
-    target = (
-        resolved_target
-        if resolved_target is not None
-        else _resolve_target(url)
-    )
+    if resolved_target is not None:
+        target = resolved_target
+    elif deadline is None:
+        target = _resolve_target(url)
+    else:
+        target = _resolve_target(url, deadline=deadline)
 
     if target is None:
+        if deadline is not None and time.monotonic() >= deadline:
+            return None, {}, "timeout"
         return None, {}, "invalid"
 
     parsed, hostname, public_ips = target
+    request_timeout = (3, 5)
 
+    if deadline is not None:
+        remaining = deadline - time.monotonic()
+
+        if remaining <= 0:
+            return None, {}, "timeout"
+
+        request_timeout = Timeout(
+            total=remaining,
+            connect=min(3.0, remaining),
+            read=min(5.0, remaining),
+        )
     ip = public_ips[0]
     ip_for_url = f"[{ip}]" if ":" in ip else ip
 
@@ -274,7 +311,7 @@ def _safe_get_response(url: str, resolved_target=None):
                 "User-Agent": "CyberShield/1.0",
                 "Connection": "close",
             },
-            timeout=(3, 5),
+            timeout=request_timeout,
             allow_redirects=False,
             stream=True,
             verify=True,
@@ -285,6 +322,9 @@ def _safe_get_response(url: str, resolved_target=None):
             response.headers.copy(),
             None,
         )
+
+    except requests.exceptions.Timeout:
+        return None, {}, "timeout"
 
     except requests.exceptions.SSLError:
         return None, {}, "tls"
@@ -300,8 +340,9 @@ def _safe_get_response(url: str, resolved_target=None):
 
 
 def check_https(url: str) -> dict:
-    """التحقق من اتصال HTTPS وشهادة TLS."""
-    _, _, error = _safe_get_response(url)
+    """التحقق من اتصال HTTPS وشهادة TLS دون اعتبار الأخطاء نجاحًا."""
+
+    status_code, _, error = _safe_get_response(url)
 
     if error == "invalid":
         return {
@@ -315,10 +356,24 @@ def check_https(url: str) -> dict:
             "message": "تعذر التحقق من شهادة TLS",
         }
 
-    if error == "connection":
+    if error == "timeout":
+        return {
+            "status": "error",
+            "message": "انتهت المهلة الزمنية المسموحة للاتصال",
+        }
+
+    # أي خطأ آخر غير متوقع يجب ألا يتحول إلى نجاح.
+    if error is not None:
         return {
             "status": "error",
             "message": "تعذر الاتصال بالموقع",
+        }
+
+    # لا نعتبر العملية ناجحة دون رمز استجابة HTTP فعلي.
+    if status_code is None:
+        return {
+            "status": "error",
+            "message": "لم يتم الحصول على استجابة HTTP صالحة",
         }
 
     return {
@@ -328,7 +383,8 @@ def check_https(url: str) -> dict:
 
 
 def check_security_headers(headers: dict) -> dict:
-    """فحص وجود ترويسات الحماية الأساسية وصحة قيمها الأولية."""
+    """فحص وجود ترويسات الحماية وصحة قيمها الأولية."""
+
     if not hasattr(headers, "items"):
         headers = {}
 
@@ -341,38 +397,42 @@ def check_security_headers(headers: dict) -> dict:
 
     # 1. Strict-Transport-Security (HSTS)
     hsts = normalized.get("strict-transport-security", "")
-    max_age = None
+    max_age_values = []
 
     for directive in hsts.split(";"):
         key, separator, value = directive.strip().partition("=")
 
-        if separator and key.strip().lower() == "max-age":
-            try:
-                max_age = int(value.strip())
-            except ValueError:
-                max_age = None
+        if key.strip().lower() == "max-age":
+            max_age_values.append(value.strip() if separator else "")
 
-            break
+    hsts_ok = False
 
-    hsts_ok = max_age is not None and max_age > 0
+    # نقبل max-age واحدة فقط، بأرقام ASCII، وقيمة موجبة.
+    if len(max_age_values) == 1:
+        age_value = max_age_values[0]
+
+        if age_value.isascii() and age_value.isdecimal():
+            hsts_ok = any(character != "0" for character in age_value)
 
     results["HSTS"] = {
         "status": "passed" if hsts_ok else "warning",
         "message": (
-            "قيمة max-age موجبة"
+            "قيمة max-age موجبة وصيغتها الأولية مقبولة"
             if hsts_ok
-            else "ترويسة HSTS مفقودة أو قيمتها غير صالحة"
+            else "ترويسة HSTS مفقودة أو أن قيمة max-age غير صالحة"
         ),
     }
 
     # 2. Content-Security-Policy (CSP)
     csp = normalized.get("content-security-policy", "").strip()
+    csp_present = bool(csp)
 
+    # لا نعلن passed لأننا لا نحلل جودة سياسة CSP أو فعاليتها.
     results["CSP"] = {
-        "status": "passed" if csp else "warning",
+        "status": "warning",
         "message": (
-            "الترويسة موجودة وتحتاج مراجعة سياستها"
-            if csp
+            "الترويسة موجودة؛ لم يتم تقييم جودة السياسة أو فعاليتها"
+            if csp_present
             else "ترويسة CSP مفقودة"
         ),
     }

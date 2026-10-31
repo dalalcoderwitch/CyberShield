@@ -1,4 +1,4 @@
-﻿# CyberShield Security Policy
+# CyberShield Security Policy
 
 ## 1. Purpose and Security Boundaries
 
@@ -195,8 +195,15 @@ The DNS timeout test currently uses a simulated slow DNS lookup.
 Controlled integration testing is still needed to characterize
 real operating-system DNS behavior.
 
-These individual timeout settings do not constitute a complete
-end-to-end scan deadline.
+Flask now creates one monotonic 25-second scan budget before target
+resolution and passes the same deadline through DNS caller waiting
+and the HTTPS request. The API returns `504 SCAN_TIMEOUT` when
+the deadline has expired at its checked stages.
+
+This is not a hard process-termination guarantee. An operating-system
+`getaddrinfo` call may continue in its daemon worker after the caller
+stops waiting. Real-network behavior still requires controlled
+integration testing.
 
 ### 7.2 Concurrent scans
 
@@ -225,8 +232,8 @@ or instances.
 The following controls still require evaluation or separate
 implementation before deployment:
 
-- Request-rate limiting.
-- A reliable end-to-end scan deadline.
+- The initial in-memory rate limit is five scan requests per 60 seconds per source IP, returning `429 RATE_LIMIT_EXCEEDED`. It is not shared across workers or instances.
+- The 25-second monotonic scan budget is implemented, but real-network behavior and operating-system DNS limitations still require verification.
 - Capacity limits shared across multiple workers or instances,
   if applicable.
 - Appropriate worker, connection, and operating-system limits.
@@ -249,9 +256,14 @@ Expected API error categories include:
   missing or insufficient for the API's request rules.
 - `403 TARGET_NOT_ALLOWED`: the target violates the destination
   policy or is otherwise not permitted.
+- `405 METHOD_NOT_ALLOWED`: the HTTP method is not supported for the endpoint.
 - `413 REQUEST_TOO_LARGE`: the request exceeds the configured
   request-size limit.
+- `429 RATE_LIMIT_EXCEEDED`: the source IP exceeded the in-process
+  scan request rate limit or the source tracking table is full.
 - `503 SCAN_CAPACITY_EXCEEDED`: the active scan capacity is full.
+- `504 SCAN_TIMEOUT`: the configured scan budget expired at a
+  checked stage.
 - `500 INTERNAL_ERROR`: an unexpected server-side failure occurred.
 
 The exact response body and status code must remain consistent
@@ -273,12 +285,13 @@ The scanner must not collect authentication credentials or
 intentionally retrieve a website's complete page content.
 
 Report target URLs must be sanitized before being included in
-the report. The current report sanitization removes URL credentials,
-query strings, and fragments from the displayed target URL.
+the report. The current report displays only the HTTPS origin.
+Credentials, paths, query strings, and fragments are omitted
+from the displayed target URL.
 
-This report sanitization does not mean the query string is removed
-from the outgoing HTTP request. The request may still send the
-provided target path and query to the remote server.
+This report sanitization affects the displayed report URL only.
+It does not remove the path or query from the outgoing HTTP request.
+The request may still send the provided path and query to the remote server.
 
 Users should therefore avoid placing passwords, access tokens,
 or other secrets in the URL.
