@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:mobile/models/scan_report.dart';
+import 'package:mobile/screens/report_screen.dart';
+import 'package:mobile/services/scan_api_service.dart';
 
 void main() {
   runApp(const CyberShieldApp());
@@ -58,17 +61,24 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
+  static const Color accent = Color(0xFF36D6B5);
+  static const Color muted = Color(0xFF9BAAC0);
+
   final TextEditingController _urlController = TextEditingController();
 
+  final ScanApiService _apiService = ScanApiService();
+
   bool _authorizationConfirmed = false;
+  bool _isScanning = false;
 
   @override
   void dispose() {
     _urlController.dispose();
+    _apiService.dispose();
     super.dispose();
   }
 
-  void _startScan() {
+  Future<void> _startScan() async {
     final input = _urlController.text.trim();
     final uri = Uri.tryParse(input);
 
@@ -84,11 +94,157 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     if (!_authorizationConfirmed) {
-      _showMessage('يرجى تأكيد امتلاكك تصريحاً لفحص الموقع.');
+      _showMessage('يرجى تأكيد امتلاكك تصريحاً بفحص الموقع.');
       return;
     }
 
-    _showMessage('الواجهة جاهزة، وسيتم ربط محرك الفحص في الخطوة القادمة.');
+    if (_isScanning) return;
+
+    setState(() {
+      _isScanning = true;
+    });
+
+    ScanReport? report;
+
+    try {
+      report = await _apiService.scan(
+        targetUrl: input,
+        authorizationConfirmed: _authorizationConfirmed,
+      );
+    } on ApiException catch (error) {
+      if (mounted) {
+        _showMessage(error.message);
+      }
+    } catch (_) {
+      if (mounted) {
+        _showMessage('حدث خطأ غير متوقع أثناء الاتصال بالخادم.');
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isScanning = false;
+        });
+      }
+    }
+
+    if (report != null && mounted) {
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (context) {
+            return ReportScreen(report: report!);
+          },
+        ),
+      );
+    }
+  }
+
+  void _openDemoReport() {
+    final demoReport = ScanReport.fromJson({
+      'scan_id': 'DEMO-001',
+      'status': 'معاينة تجريبية',
+      'target_url': 'https://example.com',
+      'scanned_at': DateTime.now().toUtc().toIso8601String(),
+      'summary': {
+        'total': 5,
+        'passed': 2,
+        'warning': 1,
+        'not_verified': 1,
+        'error': 0,
+        'skipped': 1,
+      },
+      'findings': [
+        {
+          'check_id': 'https_connection',
+          'title': 'فحص اتصال HTTPS',
+          'status': 'passed',
+          'severity': 'low',
+          'confidence': 'high',
+          'evidence': {'protocol': 'HTTPS', 'certificate_validation': 'valid'},
+          'explanation':
+              'في هذا المثال التجريبي، تم تسجيل اتصال HTTPS '
+              'وشهادة TLS صالحة.',
+          'recommendation':
+              'حافظ على تفعيل HTTPS وتجديد شهادة TLS '
+              'قبل انتهاء صلاحيتها.',
+          'limitations': ['هذه بيانات توضيحية وليست نتيجة اتصال حقيقي.'],
+        },
+        {
+          'check_id': 'header_hsts',
+          'title': 'فحص ترويسة HSTS',
+          'status': 'warning',
+          'severity': 'medium',
+          'confidence': 'high',
+          'evidence': {
+            'header': 'Strict-Transport-Security',
+            'demo_observation': 'Example warning',
+          },
+          'explanation': 'يعرض المثال ملاحظة تجريبية حول إعداد ترويسة HSTS.',
+          'recommendation':
+              'راجع إعداد Strict-Transport-Security '
+              'وفعّله بالقيمة المناسبة بعد التأكد من إعداد الموقع.',
+          'limitations': [],
+        },
+        {
+          'check_id': 'header_csp',
+          'title': 'فحص ترويسة CSP',
+          'status': 'not_verified',
+          'severity': 'info',
+          'confidence': 'low',
+          'evidence': {
+            'header': 'Content-Security-Policy',
+            'reason': 'Demo data only',
+          },
+          'explanation':
+              'لا توجد أدلة فعلية كافية في هذا المثال '
+              'لتحديد نتيجة الفحص.',
+          'recommendation':
+              'تحقق من سياسة أمان المحتوى CSP '
+              'واضبط المصادر المسموح بها.',
+          'limitations': ['لا تمثل هذه النتيجة فحصاً حقيقياً للترويسة.'],
+        },
+        {
+          'check_id': 'header_x_content_type_options',
+          'title': 'فحص X-Content-Type-Options',
+          'status': 'skipped',
+          'severity': 'info',
+          'confidence': 'high',
+          'evidence': null,
+          'explanation': 'تم تخطي هذا الفحص في بيانات المعاينة التجريبية.',
+          'recommendation': 'تحقق من إعداد الترويسة nosniff على خادم الموقع.',
+          'limitations': [],
+        },
+        {
+          'check_id': 'header_x_frame_options',
+          'title': 'فحص X-Frame-Options',
+          'status': 'passed',
+          'severity': 'low',
+          'confidence': 'high',
+          'evidence': {
+            'header': 'X-Frame-Options',
+            'demo_observation': 'Example configuration',
+          },
+          'explanation': 'يعرض المثال حالة اجتياز توضيحية لفحص حماية الإطارات.',
+          'recommendation':
+              'حافظ على إعداد حماية الإطارات، '
+              'وراجع توافقه مع CSP.',
+          'limitations': [
+            'هذه نتيجة تجريبية وليست دليلاً على إعداد الموقع الفعلي.',
+          ],
+        },
+      ],
+      'notice':
+          'تنبيه: هذا تقرير تجريبي ببيانات توضيحية فقط. '
+          'لم يتم إرسال طلب إلى الموقع ولم يتم تنفيذ فحص حقيقي. '
+          'لا تستخدم هذه النتائج للحكم على أمان أي موقع.',
+    });
+
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) {
+          return ReportScreen(report: demoReport);
+        },
+      ),
+    );
   }
 
   void _showMessage(String message) {
@@ -101,9 +257,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    const accent = Color(0xFF36D6B5);
-    const muted = Color(0xFF9BAAC0);
-
     return Scaffold(
       appBar: AppBar(
         backgroundColor: const Color(0xFF0B1120),
@@ -201,11 +354,14 @@ class _HomeScreenState extends State<HomeScreen> {
                             color: Colors.transparent,
                             child: CheckboxListTile(
                               value: _authorizationConfirmed,
-                              onChanged: (value) {
-                                setState(() {
-                                  _authorizationConfirmed = value ?? false;
-                                });
-                              },
+                              onChanged: _isScanning
+                                  ? null
+                                  : (value) {
+                                      setState(() {
+                                        _authorizationConfirmed =
+                                            value ?? false;
+                                      });
+                                    },
                               contentPadding: EdgeInsets.zero,
                               controlAffinity: ListTileControlAffinity.leading,
                               activeColor: accent,
@@ -221,11 +377,20 @@ class _HomeScreenState extends State<HomeScreen> {
                           width: double.infinity,
                           height: 54,
                           child: FilledButton.icon(
-                            onPressed: _startScan,
-                            icon: const Icon(Icons.search),
-                            label: const Text(
-                              'بدء الفحص',
-                              style: TextStyle(
+                            onPressed: _isScanning ? null : _startScan,
+                            icon: _isScanning
+                                ? const SizedBox(
+                                    width: 19,
+                                    height: 19,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: Color(0xFF07151A),
+                                    ),
+                                  )
+                                : const Icon(Icons.search),
+                            label: Text(
+                              _isScanning ? 'جارٍ تنفيذ الفحص...' : 'بدء الفحص',
+                              style: const TextStyle(
                                 fontSize: 16,
                                 fontWeight: FontWeight.bold,
                               ),
@@ -233,6 +398,29 @@ class _HomeScreenState extends State<HomeScreen> {
                             style: FilledButton.styleFrom(
                               backgroundColor: accent,
                               foregroundColor: const Color(0xFF07151A),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        SizedBox(
+                          width: double.infinity,
+                          height: 50,
+                          child: OutlinedButton.icon(
+                            onPressed: _isScanning ? null : _openDemoReport,
+                            icon: const Icon(Icons.description_outlined),
+                            label: const Text(
+                              'معاينة تقرير تجريبي',
+                              style: TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: accent,
+                              side: const BorderSide(color: accent),
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(14),
                               ),

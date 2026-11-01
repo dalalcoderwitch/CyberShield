@@ -1,6 +1,7 @@
 from threading import BoundedSemaphore
 
 from flask import Flask, jsonify, request
+from flask_cors import CORS
 
 from backend.scanner import scan_target
 from security_scanner.scanner import resolve_target
@@ -15,6 +16,17 @@ def create_app():
     """إنشاء تطبيق Flask وإعداد مسارات API."""
 
     app = Flask(__name__)
+
+    CORS(
+        app,
+        resources={
+            r"/api/v1/*": {
+                "origins": r"^http://(localhost|127\.0\.0\.1)(:\d+)?$",
+                "methods": ["GET", "POST", "OPTIONS"],
+                "allow_headers": ["Content-Type"],
+            }
+        },
+    )
     app.config["MAX_CONTENT_LENGTH"] = 16 * 1024
 
     @app.get("/api/v1/health")
