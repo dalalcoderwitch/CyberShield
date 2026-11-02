@@ -170,8 +170,9 @@ The following cases remain to be implemented or independently verified:
 - Cleanup of response and session resources after failures.
 - DNS resolution failures and unexpected resolver exceptions.
 - Duplicate or conflicting security headers.
-- API request size limits and unsupported HTTP methods.
-- Concurrent scan limits and scan rate limiting.
+- Automated API tests cover malformed JSON, invalid request fields, request-size limits, and unsupported HTTP methods; deployed proxy limits still require separate verification.
+- Multi-process and shared rate-limit behavior, including trusted-proxy source identification. The current automated tests cover only the in-process limit.
+- Real-network deadline behavior under slow DNS, connection, and read conditions. Current tests cover injected deadlines and simulated slow DNS.
 - Confirmation that unexpected exceptions do not expose stack traces or sensitive details.
 - Regression tests ensuring rejected targets never cause outbound requests.
 
@@ -193,7 +194,7 @@ A test collection count alone does not indicate that the tests passed. Record th
 
 ## 10. Current Acceptance Criteria
 
-- The current automated suite collects 43 tests, as verified during the latest review.
+- The current automated suite collects 98 tests, as verified on the latest test run.
 - The test count must be updated whenever tests are added or removed.
 - All current automated tests pass.
 - The test plan distinguishes mocked behavior from real network verification.

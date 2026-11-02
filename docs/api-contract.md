@@ -1,4 +1,4 @@
-﻿# CyberShield — API Contract
+# CyberShield — API Contract
 
 **Version:** Draft 1.2
 
@@ -206,7 +206,7 @@ A complete report contains five findings, one for each agreed check.
 |---|---|
 | `scan_id` | Identifier generated for the report |
 | `status` | Report-generation status |
-| `target_url` | Requested target URL |
+| `target_url` | Sanitized HTTPS origin only; credentials, path, query, and fragment are omitted |
 | `scanned_at` | Scan timestamp in ISO 8601 format |
 | `engine_version` | Scanner report version |
 | `http_status` | Target response status code, or `null` if no response was obtained |
@@ -315,7 +315,10 @@ avoid exposing internal exception details.
 | `400` | `INVALID_REQUEST` | Request JSON or fields are invalid |
 | `403` | `AUTHORIZATION_REQUIRED` | Authorization confirmation is false |
 | `403` | `TARGET_NOT_ALLOWED` | The target is rejected by the target security policy |
+| `405` | `METHOD_NOT_ALLOWED` | The HTTP method is not supported for this endpoint |
 | `413` | `REQUEST_TOO_LARGE` | The request exceeds the configured size limit |
+| `429` | `RATE_LIMIT_EXCEEDED` | The source IP exceeded the in-process scan rate limit or the source tracking table is full |
+| `504` | `SCAN_TIMEOUT` | The configured scan budget expired at a checked stage |
 | `500` | `INTERNAL_ERROR` | An unexpected server-side error occurred |
 | `503` | `SCAN_CAPACITY_EXCEEDED` | The maximum number of concurrent scans has been reached |
 
@@ -337,7 +340,10 @@ field.
 - API `200`: a report was returned.
 - API `400`: request data is invalid.
 - API `403`: authorization confirmation or target policy prevents scanning.
+- API `405`: the HTTP method is not supported for the requested endpoint.
 - API `413`: the request body exceeds the configured size limit.
+- API `429`: the source IP exceeded the in-process request rate limit; the request was rejected before target resolution and scanning.
+- API `504`: the configured scan budget expired during a checked stage of the scan.
 - API `500`: an unexpected server error occurred.
 - API `503`: scan capacity is exhausted; the request was not started.
 
@@ -395,8 +401,9 @@ The following items require implementation review or additional testing:
 - DNS rebinding resistance.
 - Controlled integration tests for certificate failures.
 - DNS failures, timeouts, and IPv4/IPv6 edge cases.
-- Response-size limits and a total scan deadline.
-- Concurrency and request rate controls.
+- Explicit response-header size limits and real-network response-size behavior still require verification. The scanner uses streaming mode and closes responses without consuming response bodies.
+- The initial 25-second monotonic scan budget and `504 SCAN_TIMEOUT` response; real-network verification and DNS limitations remain.
+- Four concurrent scans per Python process and an in-memory per-source limit of five authorized scans per 60 seconds, returning `429 RATE_LIMIT_EXCEEDED`; these limits are not shared across multiple workers or instances.
 - Safe logging and handling of sensitive URL components.
 - Consistent handling of plain HTTP URLs.
 - Verification that every documented API error mapping is implemented.

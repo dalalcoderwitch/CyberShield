@@ -61,11 +61,10 @@ def test_present_headers():
     results = check_security_headers(headers)
 
     assert results["HSTS"]["status"] == "passed"
-    assert results["CSP"]["status"] == "passed"
+    assert results["CSP"]["status"] == "warning"
+    assert "لم يتم تقييم" in results["CSP"]["message"]
     assert results["X-Content-Type-Options"]["status"] == "passed"
     assert results["X-Frame-Options"]["status"] == "passed"
-
-
 def test_invalid_header_values_warn():
     headers = {
         "Strict-Transport-Security": "max-age=0",
@@ -81,6 +80,34 @@ def test_invalid_header_values_warn():
     assert results["X-Content-Type-Options"]["status"] == "warning"
     assert results["X-Frame-Options"]["status"] == "warning"
 
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "max-age=0",
+        "max-age=-1",
+        "max-age=+100",
+        "max-age=1_0",
+        "max-age=١٠",
+        "max-age=10abc",
+        "max-age=10; max-age=20",
+    ],
+)
+def test_hsts_rejects_malformed_or_non_positive_max_age(value):
+    results = check_security_headers(
+        {"Strict-Transport-Security": value}
+    )
+
+    assert results["HSTS"]["status"] == "warning"
+
+
+def test_csp_presence_does_not_mean_policy_is_validated():
+    results = check_security_headers(
+        {"Content-Security-Policy": "default-src 'self'"}
+    )
+
+    assert results["CSP"]["status"] == "warning"
+    assert "لم يتم تقييم" in results["CSP"]["message"]
 
 def test_reject_unsafe_urls():
     assert validate_url("http://example.com") is False
@@ -855,3 +882,346 @@ Sydvx0FeNWmqPBhmlaj0SqH0
         server.shutdown()
         server.server_close()
         server_thread.join(timeout=2)
+
+def test_safe_get_response_applies_remaining_deadline(monkeypatch):
+    import time
+    from urllib3.util import Timeout
+
+    parsed = scanner_module.urlparse("https://example.com/")
+    resolved_target = (
+        parsed,
+        "example.com",
+        ["93.184.216.34"],
+    )
+
+    captured = {}
+
+    class FakeResponse:
+        status_code = 200
+        headers = {"X-Test": "1"}
+
+        def close(self):
+            captured["response_closed"] = True
+
+    class FakeSession:
+        def __init__(self):
+            self.trust_env = True
+
+        def mount(self, prefix, adapter):
+            captured["adapter"] = adapter
+
+        def get(self, url, **kwargs):
+            captured["url"] = url
+            captured["kwargs"] = kwargs
+            return FakeResponse()
+
+        def close(self):
+            captured["session_closed"] = True
+
+    monkeypatch.setattr(
+        scanner_module.requests,
+        "Session",
+        FakeSession,
+    )
+
+    deadline = time.monotonic() + 12.0
+
+    status, headers, error = scanner_module._safe_get_response(
+        "https://example.com/",
+        resolved_target=resolved_target,
+        deadline=deadline,
+    )
+
+    assert status == 200
+    assert headers == {"X-Test": "1"}
+    assert error is None
+
+    request_options = captured["kwargs"]
+    timeout = request_options["timeout"]
+
+    assert isinstance(timeout, Timeout)
+    assert 0 < timeout.total <= 12.0
+    assert 0 < timeout.connect_timeout <= 3.0
+    assert 0 < timeout._read <= 5.0
+
+    assert request_options["verify"] is True
+    assert request_options["allow_redirects"] is False
+    assert captured["response_closed"] is True
+    assert captured["session_closed"] is True
+
+@pytest.mark.parametrize(
+    "ip_address",
+    [
+        # IPv4: private, loopback, link-local, reserved, multicast
+        "0.0.0.0",
+        "10.0.0.1",
+        "100.64.0.1",
+        "127.0.0.1",
+        "169.254.169.254",
+        "172.16.0.1",
+        "192.0.2.1",
+        "192.168.1.1",
+        "198.18.0.1",
+        "198.51.100.1",
+        "203.0.113.1",
+        "224.0.0.1",
+        "240.0.0.1",
+
+        # IPv6: unspecified, loopback, ULA, link-local,
+        # documentation, multicast
+        "::",
+        "::1",
+        "fc00::1",
+        "fe80::1",
+        "2001:db8::1",
+        "ff02::1",
+    ],
+)
+def test_reject_non_global_ips_before_http_request(
+    monkeypatch,
+    ip_address,
+):
+    if ":" in ip_address:
+        family = socket.AF_INET6
+        sockaddr = (ip_address, 443, 0, 0)
+    else:
+        family = socket.AF_INET
+        sockaddr = (ip_address, 443)
+
+    monkeypatch.setattr(
+        socket,
+        "getaddrinfo",
+        lambda *args, **kwargs: [
+            (
+                family,
+                socket.SOCK_STREAM,
+                socket.IPPROTO_TCP,
+                "",
+                sockaddr,
+            )
+        ],
+    )
+
+    def unexpected_request(*args, **kwargs):
+        raise AssertionError(
+            f"HTTP request must not run for {ip_address}"
+        )
+
+    monkeypatch.setattr(
+        requests.Session,
+        "get",
+        unexpected_request,
+    )
+
+    status, headers, error = _safe_get_response(
+        "https://example.com"
+    )
+
+    assert status is None
+    assert headers == {}
+    assert error == "invalid"
+
+def test_http_timeout_returns_timeout_and_closes_session(monkeypatch):
+    import time
+    from urllib3.util import Timeout
+
+    parsed = scanner_module.urlparse("https://example.com/")
+    resolved_target = (
+        parsed,
+        "example.com",
+        ["93.184.216.34"],
+    )
+
+    captured = {}
+
+    class FakeSession:
+        def __init__(self):
+            self.trust_env = True
+
+        def mount(self, prefix, adapter):
+            pass
+
+        def get(self, url, **kwargs):
+            captured["timeout"] = kwargs["timeout"]
+            raise requests.exceptions.ReadTimeout(
+                "Simulated read timeout"
+            )
+
+        def close(self):
+            captured["session_closed"] = True
+
+    monkeypatch.setattr(
+        scanner_module.requests,
+        "Session",
+        FakeSession,
+    )
+
+    status, headers, error = scanner_module._safe_get_response(
+        "https://example.com/",
+        resolved_target=resolved_target,
+        deadline=time.monotonic() + 10,
+    )
+
+    assert status is None
+    assert headers == {}
+    assert error == "timeout"
+    assert isinstance(captured["timeout"], Timeout)
+    assert captured["session_closed"] is True
+
+
+def test_expired_deadline_prevents_http_session_creation(monkeypatch):
+    import time
+
+    parsed = scanner_module.urlparse("https://example.com/")
+    resolved_target = (
+        parsed,
+        "example.com",
+        ["93.184.216.34"],
+    )
+
+    def unexpected_session():
+        raise AssertionError(
+            "HTTP session must not be created after deadline"
+        )
+
+    monkeypatch.setattr(
+        scanner_module.requests,
+        "Session",
+        unexpected_session,
+    )
+
+    status, headers, error = scanner_module._safe_get_response(
+        "https://example.com/",
+        resolved_target=resolved_target,
+        deadline=time.monotonic() - 1,
+    )
+
+    assert status is None
+    assert headers == {}
+    assert error == "timeout"
+
+def test_http_connect_timeout_returns_timeout_and_closes_session(
+    monkeypatch,
+):
+    import time
+    from urllib3.util import Timeout
+
+    parsed = scanner_module.urlparse("https://example.com/")
+    resolved_target = (
+        parsed,
+        "example.com",
+        ["93.184.216.34"],
+    )
+
+    captured = {}
+
+    class FakeSession:
+        def __init__(self):
+            self.trust_env = True
+
+        def mount(self, prefix, adapter):
+            pass
+
+        def get(self, url, **kwargs):
+            captured["timeout"] = kwargs["timeout"]
+            raise requests.exceptions.ConnectTimeout(
+                "Simulated connection timeout"
+            )
+
+        def close(self):
+            captured["session_closed"] = True
+
+    monkeypatch.setattr(
+        scanner_module.requests,
+        "Session",
+        FakeSession,
+    )
+
+    status, headers, error = scanner_module._safe_get_response(
+        "https://example.com/",
+        resolved_target=resolved_target,
+        deadline=time.monotonic() + 10,
+    )
+
+    assert status is None
+    assert headers == {}
+    assert error == "timeout"
+    assert isinstance(captured["timeout"], Timeout)
+    assert captured["session_closed"] is True
+
+def test_dns_timeout_uses_remaining_scan_budget(monkeypatch):
+    import time
+    from queue import Empty
+
+    captured = {}
+
+    class FakeSlots:
+        def acquire(self, blocking=False):
+            return True
+
+        def release(self):
+            pass
+
+    class FakeQueue:
+        def __init__(self, maxsize=0):
+            pass
+
+        def get(self, timeout=None):
+            captured["timeout"] = timeout
+            raise Empty
+
+    class FakeThread:
+        def __init__(self, target, name=None, daemon=None):
+            self.target = target
+
+        def start(self):
+            pass
+
+    monkeypatch.setattr(
+        scanner_module,
+        "_DNS_LOOKUP_SLOTS",
+        FakeSlots(),
+    )
+    monkeypatch.setattr(scanner_module, "Queue", FakeQueue)
+    monkeypatch.setattr(scanner_module, "Thread", FakeThread)
+
+    deadline = time.monotonic() + 0.5
+
+    result = scanner_module._resolve_dns_with_timeout(
+        "example.com",
+        deadline=deadline,
+    )
+
+    assert result is None
+    assert 0 < captured["timeout"] <= 0.5
+    assert captured["timeout"] < scanner_module._DNS_TIMEOUT_SECONDS
+
+
+def test_https_timeout_is_error(monkeypatch):
+    """لا يجوز اعتبار انتهاء المهلة نجاحًا."""
+
+    monkeypatch.setattr(
+        scanner_module,
+        "_safe_get_response",
+        lambda url: (None, {}, "timeout"),
+    )
+
+    result = check_https("https://example.com")
+
+    assert result["status"] == "error"
+    assert "المهلة" in result["message"]
+
+
+def test_https_unknown_error_is_not_passed(monkeypatch):
+    """الأخطاء غير المعروفة لا تتحول إلى passed."""
+
+    monkeypatch.setattr(
+        scanner_module,
+        "_safe_get_response",
+        lambda url: (None, {}, "unexpected_error"),
+    )
+
+    result = check_https("https://example.com")
+
+    assert result["status"] == "error"
+    assert result["status"] != "passed"

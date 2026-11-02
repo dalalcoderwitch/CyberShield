@@ -60,7 +60,7 @@ REPORT_LIMITATIONS = [
     "لا يتبع الماسح التحويلات تلقائيًا؛ تُفحص الاستجابة الأولى فقط.",
     "وجود ترويسة لا يثبت أن إعدادها آمن أو مناسب بالكامل.",
     "النتائج تخص الاستجابة التي تم فحصها وقد تختلف باختلاف المسار أو الخادم.",
-    "تُحذف معاملات الاستعلام والجزء fragment من رابط الهدف المعروض في التقرير.",
+    "يُعرض أصل HTTPS فقط؛ تُحذف بيانات الاعتماد والمسار والاستعلام والجزء fragment من رابط الهدف.",
 ]
 
 REPORT_NOTICE = (
@@ -70,10 +70,10 @@ REPORT_NOTICE = (
 
 def _safe_report_target_url(target_url: str) -> str:
     """
-    تجهيز رابط آمن للعرض في التقرير.
+    تجهيز أصل رابط آمن للعرض في التقرير.
 
-    تُحذف معلومات المستخدم ومعاملات الاستعلام والجزء fragment.
-    يُحتفظ بالمضيف والمسار لتحديد المورد الذي جرى فحصه.
+    يُحتفظ بمخطط HTTPS واسم المضيف فقط.
+    تُحذف بيانات المستخدم والمسار والاستعلام والجزء fragment.
     إذا كان الرابط غير صالح أو غير مدعوم، لا نعيد قيمته الأصلية.
     """
     if not isinstance(target_url, str) or not target_url:
@@ -119,16 +119,17 @@ def _safe_report_target_url(target_url: str) -> str:
     else:
         safe_netloc = hostname
 
-    # لا نعيد query أو fragment؛ فقد يحتويان بيانات حساسة.
+    # لا نعرض المسار أو query أو fragment.
     return urlunsplit(
         (
             "https",
             safe_netloc,
-            parsed.path,
+            "",
             "",
             "",
         )
     )
+
 
 
 def _make_finding(
@@ -181,7 +182,11 @@ def _summarize(findings: list[dict]) -> dict:
     return summary
 
 
-def scan_target(target_url: str, resolved_target=None) -> dict:
+def scan_target(
+    target_url: str,
+    resolved_target=None,
+    deadline: float | None = None,
+) -> dict:
     """
     تنفيذ الفحوصات المحددة وإرجاع تقرير منظم.
 
@@ -194,12 +199,24 @@ def scan_target(target_url: str, resolved_target=None) -> dict:
 
     # يجب أن يبقى فحص الهدف داخل الماسح فعالًا،
     # حتى لو استُدعيت هذه الدالة مباشرةً خارج Flask.
-    if resolved_target is None:
-        status_code, headers, error = _safe_get_response(target_url)
+    if deadline is None:
+        if resolved_target is None:
+            status_code, headers, error = _safe_get_response(target_url)
+        else:
+            status_code, headers, error = _safe_get_response(
+                target_url,
+                resolved_target=resolved_target,
+            )
+    elif resolved_target is None:
+        status_code, headers, error = _safe_get_response(
+            target_url,
+            deadline=deadline,
+        )
     else:
         status_code, headers, error = _safe_get_response(
             target_url,
             resolved_target=resolved_target,
+            deadline=deadline,
         )
     findings = []
 
@@ -241,6 +258,11 @@ def scan_target(target_url: str, resolved_target=None) -> dict:
                 "تعذر التحقق من شهادة TLS؛ "
                 "لم يُعتبر الاتصال ناجحًا."
             )
+        elif error == "timeout":
+            https_status = "error"
+            explanation = (
+                "انتهت المهلة الزمنية المسموحة قبل اكتمال الاتصال أو الاستجابة."
+            )
         else:
             https_status = "error"
             explanation = "تعذر الاتصال بالموقع."
@@ -281,35 +303,31 @@ def scan_target(target_url: str, resolved_target=None) -> dict:
                 header_name.lower()
             )
 
-            if result["status"] == "passed":
+            header_is_present = bool(
+                header_value is not None and header_value.strip()
+            )
+
+            if header_is_present:
                 evidence = (
-                    f"تم العثور على الترويسة {header_name}."
+                    f"تم العثور على الترويسة {header_name}. "
+                    f"القيمة المرصودة: {header_value[:200]}"
+                )
+            else:
+                evidence = (
+                    f"الترويسة {header_name} غير موجودة أو فارغة."
                 )
 
-                if header_value is not None:
-                    evidence += (
-                        f" القيمة المرصودة: "
-                        f"{header_value[:200]}"
-                    )
-
+            if item["key"] == "CSP":
+                confidence = "medium"
+                severity = item["severity"]
+            elif result["status"] == "passed":
                 confidence = "high"
                 severity = "info"
             else:
-                evidence = (
-                    f"الترويسة {header_name} مفقودة "
-                    "أو أن قيمتها غير مقبولة في هذا الفحص."
-                )
-
                 confidence = "high"
                 severity = item["severity"]
-
             explanation = result["message"]
 
-            if item["key"] == "CSP" and header_value:
-                explanation += (
-                    " فحص وجود الترويسة لا يقيّم جودة "
-                    "السياسة أو مدى فعاليتها."
-                )
 
             if item["key"] == "HSTS" and header_value:
                 explanation += (
