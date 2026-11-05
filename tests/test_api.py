@@ -969,3 +969,38 @@ def test_scan_rate_limit_reclaims_expired_source_slots(monkeypatch):
     )
 
     assert second.status_code == 200
+
+def test_scan_accepts_url_at_maximum_length(monkeypatch):
+    """Accept a URL whose length is exactly the configured maximum."""
+
+    app = api_module.create_app()
+    client = app.test_client()
+
+    target_url = "https://example.com/" + (
+        "a" * (2048 - len("https://example.com/"))
+    )
+
+    monkeypatch.setattr(
+        api_module,
+        "resolve_target",
+        lambda url, deadline=None: object(),
+    )
+    monkeypatch.setattr(
+        api_module,
+        "scan_target",
+        lambda url, resolved_target=None, deadline=None: {
+            "status": "completed"
+        },
+    )
+
+    assert len(target_url) == 2048
+
+    response = client.post(
+        "/api/v1/scan",
+        json={
+            "target_url": target_url,
+            "authorization_confirmed": True,
+        },
+    )
+
+    assert response.status_code == 200
