@@ -829,3 +829,16 @@ def test_scan_returns_504_when_deadline_expires_after_valid_resolution(
     assert response.status_code == 504
     assert response.get_json()["error"]["code"] == "SCAN_TIMEOUT"
     assert scan_calls == []
+
+def test_scan_rejects_non_json_content_type():
+    app = api_module.create_app()
+    client = app.test_client()
+
+    response = client.post(
+        "/api/v1/scan",
+        data='{"target_url":"https://example.com","authorization_confirmed":true}',
+        content_type="text/plain",
+    )
+
+    assert response.status_code == 400
+    assert response.json["error"]["code"] == "INVALID_REQUEST"
