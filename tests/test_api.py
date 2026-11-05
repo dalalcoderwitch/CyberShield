@@ -1088,3 +1088,65 @@ def test_scan_rejects_numeric_authorization_value(monkeypatch):
 
     assert response.status_code == 400
     assert response.json["error"]["code"] == "INVALID_REQUEST"
+
+def test_scan_releases_capacity_after_resolution_timeout(monkeypatch):
+    app = api_module.create_app()
+    client = app.test_client()
+
+    clock = iter((99.0, 100.0, 126.0, 127.0, 128.0, 129.0, 130.0))
+    monkeypatch.setattr(
+        api_module,
+        "time",
+        SimpleNamespace(monotonic=lambda: next(clock)),
+    )
+    monkeypatch.setattr(
+        api_module,
+        "_SCAN_SLOTS",
+        BoundedSemaphore(1),
+    )
+
+    resolved_target = (
+        "parsed",
+        "example.com",
+        ["93.184.216.34"],
+    )
+
+    resolution_calls = []
+
+    def fake_resolve(url, deadline=None):
+        resolution_calls.append(url)
+        return resolved_target
+
+    monkeypatch.setattr(api_module, "resolve_target", fake_resolve)
+
+    scan_calls = []
+
+    def fake_scan(*args, **kwargs):
+        scan_calls.append((args, kwargs))
+        return {}
+
+    monkeypatch.setattr(api_module, "scan_target", fake_scan)
+
+    payload = {
+        "target_url": "https://example.com",
+        "authorization_confirmed": True,
+    }
+    request_options = {"environ_overrides": {"REMOTE_ADDR": "198.51.100.77"}}
+
+    first = client.post(
+        "/api/v1/scan",
+        json=payload,
+        **request_options,
+    )
+    assert first.status_code == 504
+    assert first.json["error"]["code"] == "SCAN_TIMEOUT"
+
+    second = client.post(
+        "/api/v1/scan",
+        json=payload,
+        **request_options,
+    )
+    assert second.status_code == 200
+
+    assert len(resolution_calls) == 2
+    assert len(scan_calls) == 1
