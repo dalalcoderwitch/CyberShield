@@ -1048,3 +1048,22 @@ def test_scan_capacity_is_released_after_resolution_exception(
     assert second.status_code == 200
 
     assert len(resolution_calls) == 2
+
+def test_scan_rejects_empty_json_body(monkeypatch):
+    app = api_module.create_app()
+    client = app.test_client()
+
+    def fail_if_called(*args, **kwargs):
+        pytest.fail("Target resolution or scanning must not run")
+
+    monkeypatch.setattr(api_module, "resolve_target", fail_if_called)
+    monkeypatch.setattr(api_module, "scan_target", fail_if_called)
+
+    response = client.post(
+        "/api/v1/scan",
+        data="",
+        content_type="application/json",
+    )
+
+    assert response.status_code == 400
+    assert response.json["error"]["code"] == "INVALID_REQUEST"
