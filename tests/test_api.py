@@ -1004,3 +1004,47 @@ def test_scan_accepts_url_at_maximum_length(monkeypatch):
     )
 
     assert response.status_code == 200
+
+def test_scan_capacity_is_released_after_resolution_exception(
+    monkeypatch,
+):
+    app = api_module.create_app()
+    client = app.test_client()
+
+    resolution_calls = []
+
+    def fake_resolve(url, deadline=None):
+        resolution_calls.append(url)
+
+        if len(resolution_calls) == 1:
+            raise RuntimeError("Simulated resolution failure")
+
+        return object()
+
+    monkeypatch.setattr(
+        api_module,
+        "resolve_target",
+        fake_resolve,
+    )
+
+    monkeypatch.setattr(
+        api_module,
+        "scan_target",
+        lambda url, resolved_target=None, deadline=None: {
+            "status": "completed"
+        },
+    )
+
+    payload = {
+        "target_url": "https://example.com",
+        "authorization_confirmed": True,
+    }
+
+    first = client.post("/api/v1/scan", json=payload)
+    assert first.status_code == 500
+    assert first.json["error"]["code"] == "INTERNAL_ERROR"
+
+    second = client.post("/api/v1/scan", json=payload)
+    assert second.status_code == 200
+
+    assert len(resolution_calls) == 2
