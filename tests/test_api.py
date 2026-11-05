@@ -1242,3 +1242,43 @@ def test_scan_does_not_start_scanner_for_disallowed_target(monkeypatch):
     assert response.status_code == 403
     assert response.json["error"]["code"] == "TARGET_NOT_ALLOWED"
     assert scan_calls == []
+def test_scan_releases_capacity_after_report_serialization_error(monkeypatch):
+    app = api_module.create_app()
+    client = app.test_client()
+
+    monkeypatch.setattr(
+        api_module,
+        "_SCAN_SLOTS",
+        BoundedSemaphore(1),
+    )
+    monkeypatch.setattr(
+        api_module,
+        "resolve_target",
+        lambda url, deadline=None: object(),
+    )
+
+    scan_calls = []
+
+    def fake_scan(url, resolved_target=None, deadline=None):
+        scan_calls.append(url)
+
+        if len(scan_calls) == 1:
+            return {"invalid": object()}
+
+        return {"status": "completed"}
+
+    monkeypatch.setattr(api_module, "scan_target", fake_scan)
+
+    payload = {
+        "target_url": "https://example.com",
+        "authorization_confirmed": True,
+    }
+
+    first = client.post("/api/v1/scan", json=payload)
+    assert first.status_code == 500
+    assert first.json["error"]["code"] == "INTERNAL_ERROR"
+
+    second = client.post("/api/v1/scan", json=payload)
+    assert second.status_code == 200
+
+    assert len(scan_calls) == 2
