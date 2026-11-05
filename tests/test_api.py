@@ -1067,3 +1067,24 @@ def test_scan_rejects_empty_json_body(monkeypatch):
 
     assert response.status_code == 400
     assert response.json["error"]["code"] == "INVALID_REQUEST"
+
+def test_scan_rejects_numeric_authorization_value(monkeypatch):
+    app = api_module.create_app()
+    client = app.test_client()
+
+    def fail_if_called(*args, **kwargs):
+        pytest.fail("Target resolution or scanning must not run")
+
+    monkeypatch.setattr(api_module, "resolve_target", fail_if_called)
+    monkeypatch.setattr(api_module, "scan_target", fail_if_called)
+
+    response = client.post(
+        "/api/v1/scan",
+        json={
+            "target_url": "https://example.com",
+            "authorization_confirmed": 1,
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json["error"]["code"] == "INVALID_REQUEST"
