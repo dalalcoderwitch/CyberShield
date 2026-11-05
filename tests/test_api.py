@@ -887,3 +887,33 @@ def test_scan_rate_limit_ignores_untrusted_forwarded_for(monkeypatch):
     assert response.status_code == 429
     assert response.json["error"]["code"] == "RATE_LIMIT_EXCEEDED"
     assert len(scan_calls) == 5
+
+def test_scan_requires_authorization_before_target_resolution(monkeypatch):
+    """Reject unconfirmed scans before DNS resolution or scanner execution."""
+
+    app = api_module.create_app()
+    client = app.test_client()
+    calls = {"resolve": 0, "scan": 0}
+
+    def fake_resolve(url, deadline=None):
+        calls["resolve"] += 1
+        return object()
+
+    def fake_scan(url, resolved_target=None, deadline=None):
+        calls["scan"] += 1
+        return {"status": "completed"}
+
+    monkeypatch.setattr(api_module, "resolve_target", fake_resolve)
+    monkeypatch.setattr(api_module, "scan_target", fake_scan)
+
+    response = client.post(
+        "/api/v1/scan",
+        json={
+            "target_url": "https://example.com",
+            "authorization_confirmed": False,
+        },
+    )
+
+    assert response.status_code == 403
+    assert response.json["error"]["code"] == "AUTHORIZATION_REQUIRED"
+    assert calls == {"resolve": 0, "scan": 0}
