@@ -1292,3 +1292,42 @@ def test_health_rejects_unsupported_method_with_json():
     assert "GET" in response.headers.get("Allow", "")
     assert response.json["error"]["code"] == "METHOD_NOT_ALLOWED"
     assert response.json["error"]["message"]
+def test_scan_rate_limit_expires_at_exactly_sixty_seconds(monkeypatch):
+    app = api_module.create_app()
+    client = app.test_client()
+
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(
+        api_module,
+        "time",
+        SimpleNamespace(monotonic=lambda: clock["now"]),
+    )
+    monkeypatch.setattr(
+        api_module,
+        "resolve_target",
+        lambda url, deadline=None: object(),
+    )
+    monkeypatch.setattr(
+        api_module,
+        "scan_target",
+        lambda url, resolved_target=None, deadline=None: {
+            "status": "completed"
+        },
+    )
+
+    payload = {
+        "target_url": "https://example.com",
+        "authorization_confirmed": True,
+    }
+
+    for _ in range(5):
+        response = client.post("/api/v1/scan", json=payload)
+        assert response.status_code == 200
+
+    response = client.post("/api/v1/scan", json=payload)
+    assert response.status_code == 429
+
+    clock["now"] = 1060.0
+
+    response = client.post("/api/v1/scan", json=payload)
+    assert response.status_code == 200
