@@ -1282,3 +1282,13 @@ def test_scan_releases_capacity_after_report_serialization_error(monkeypatch):
     assert second.status_code == 200
 
     assert len(scan_calls) == 2
+def test_health_rejects_unsupported_method_with_json():
+    app = api_module.create_app()
+    client = app.test_client()
+
+    response = client.post("/api/v1/health")
+
+    assert response.status_code == 405
+    assert "GET" in response.headers.get("Allow", "")
+    assert response.json["error"]["code"] == "METHOD_NOT_ALLOWED"
+    assert response.json["error"]["message"]
