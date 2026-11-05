@@ -81,6 +81,23 @@ def test_invalid_header_values_warn():
     assert results["X-Frame-Options"]["status"] == "warning"
 
 
+def test_duplicate_case_insensitive_security_headers_warn():
+    headers = {
+        "Strict-Transport-Security": "max-age=0",
+        "strict-transport-security": "max-age=31536000",
+        "X-Content-Type-Options": "invalid",
+        "x-content-type-options": "nosniff",
+        "X-Frame-Options": "ALLOWALL",
+        "x-frame-options": "DENY",
+    }
+
+    results = check_security_headers(headers)
+
+    assert results["HSTS"]["status"] == "warning"
+    assert results["X-Content-Type-Options"]["status"] == "warning"
+    assert results["X-Frame-Options"]["status"] == "warning"
+
+
 @pytest.mark.parametrize(
     "value",
     [
@@ -135,6 +152,24 @@ def test_reject_private_dns_address(monkeypatch):
 
 def test_accept_public_dns_address(monkeypatch):
     mock_public_dns(monkeypatch)
+    assert validate_url("https://example.com") is True
+
+
+def test_accept_public_ipv6_dns_address(monkeypatch):
+    monkeypatch.setattr(
+        socket,
+        "getaddrinfo",
+        lambda *args, **kwargs: [
+            (
+                socket.AF_INET6,
+                socket.SOCK_STREAM,
+                socket.IPPROTO_TCP,
+                "",
+                ("2001:4860:4860::8888", 443, 0, 0),
+            )
+        ],
+    )
+
     assert validate_url("https://example.com") is True
 
 
@@ -322,7 +357,50 @@ def test_dns_failure_never_triggers_http_request(monkeypatch):
 
     assert status is None
     assert headers == {}
-    assert error == "invalid"
+    assert error == "dns_error"
+
+def test_unexpected_dns_exception_never_triggers_http_request(monkeypatch):
+    """Unexpected resolver exceptions must not reach the HTTP layer."""
+
+    def dns_failure(*args, **kwargs):
+        raise RuntimeError("Simulated unexpected DNS failure")
+
+    monkeypatch.setattr(socket, "getaddrinfo", dns_failure)
+
+    def unexpected_request(*args, **kwargs):
+        raise AssertionError(
+            "HTTP request must not run after unexpected DNS failure"
+        )
+
+    monkeypatch.setattr(requests.Session, "get", unexpected_request)
+
+    status, headers, error = _safe_get_response("https://example.com")
+
+    assert status is None
+    assert headers == {}
+    assert error == "dns_error"
+
+def test_dns_capacity_exhaustion_never_triggers_http_request(monkeypatch):
+    class BusySlots:
+        def acquire(self, blocking=False):
+            return False
+
+    monkeypatch.setattr(
+        scanner_module,
+        "_DNS_LOOKUP_SLOTS",
+        BusySlots(),
+    )
+
+    def unexpected_request(*args, **kwargs):
+        raise AssertionError("HTTP must not run when DNS capacity is full")
+
+    monkeypatch.setattr(requests.Session, "get", unexpected_request)
+
+    status, headers, error = _safe_get_response("https://example.com")
+
+    assert status is None
+    assert headers == {}
+    assert error == "dns_capacity"
 
 
 def test_reject_mixed_public_and_private_ipv6_results(monkeypatch):
@@ -516,13 +594,16 @@ def test_resolved_target_is_reused_without_second_dns_lookup(monkeypatch):
     def fake_dns(*args, **kwargs):
         nonlocal dns_calls
         dns_calls += 1
+        resolved_ip = (
+            "93.184.216.34" if dns_calls == 1 else "127.0.0.1"
+        )
         return [
             (
                 socket.AF_INET,
                 socket.SOCK_STREAM,
                 socket.IPPROTO_TCP,
                 "",
-                ("93.184.216.34", 443),
+                (resolved_ip, 443),
             )
         ]
 
@@ -623,7 +704,7 @@ def test_dns_timeout_rejects_target_before_http_request(monkeypatch):
 
     assert status is None
     assert headers == {}
-    assert error == "invalid"
+    assert error == "dns_timeout"
 
     assert dns_started.wait(timeout=1), (
         "لم يبدأ عامل DNS ضمن الوقت المتوقع"
@@ -701,7 +782,51 @@ def test_response_body_is_not_read_and_response_is_closed(monkeypatch):
     assert created_sessions[0].was_closed is True
 
 
-def test_real_tls_rejects_untrusted_self_signed_certificate(tmp_path):
+def test_response_and_session_close_when_header_access_raises(monkeypatch):
+    mock_public_dns(monkeypatch)
+
+    class FakeResponse:
+        status_code = 200
+        closed = False
+
+        @property
+        def headers(self):
+            raise RuntimeError("Simulated header access failure")
+
+        def close(self):
+            self.closed = True
+
+    response = FakeResponse()
+
+    class FakeSession:
+        def __init__(self):
+            self.trust_env = True
+            self.closed = False
+
+        def mount(self, prefix, adapter):
+            pass
+
+        def get(self, url, **kwargs):
+            return response
+
+        def close(self):
+            self.closed = True
+
+    session = FakeSession()
+    monkeypatch.setattr(
+        scanner_module.requests,
+        "Session",
+        lambda: session,
+    )
+
+    with pytest.raises(RuntimeError, match="Simulated header access failure"):
+        scanner_module._safe_get_response("https://example.com")
+
+    assert response.closed is True
+    assert session.closed is True
+
+
+def test_real_tls_rejects_untrusted_self_signed_certificate(tmp_path, monkeypatch):
     """
     مصافحة TLS حقيقية مع خادم محلي:
     1. رفض الشهادة الذاتية التوقيع غير الموثوقة.
@@ -765,10 +890,33 @@ Sydvx0FeNWmqPBhmlaj0SqH0
     key_path.write_text(private_key_pem, encoding="ascii")
 
     requests_seen = {"count": 0}
+    malformed_headers = {"enabled": False, "oversized": False}
 
     class TestHandler(BaseHTTPRequestHandler):
         def do_GET(self):
             requests_seen["count"] += 1
+
+            if malformed_headers["oversized"]:
+                payload = (
+                    b"HTTP/1.1 200 OK\r\n"
+                    + b"X-Oversized: " + b"A" * 65537 + b"\r\n"
+                    + b"Connection: close\r\n\r\n"
+                )
+                self.connection.sendall(payload)
+                return
+
+            if malformed_headers["enabled"]:
+                payload = (
+                    b"HTTP/1.1 200 OK\r\n"
+                    + b"".join(
+                        f"X-Test-{index}: value\r\n".encode("ascii")
+                        for index in range(101)
+                    )
+                    + b"Connection: close\r\n\r\n"
+                )
+                self.connection.sendall(payload)
+                return
+
             self.send_response(200)
             self.end_headers()
             self.wfile.write(b"ok")
@@ -781,6 +929,13 @@ Sydvx0FeNWmqPBhmlaj0SqH0
         certfile=str(certificate_path),
         keyfile=str(key_path),
     )
+
+    received_sni = []
+
+    def capture_sni(_tls_socket, server_name, _initial_context):
+        received_sni.append(server_name)
+
+    tls_context.set_servername_callback(capture_sni)
 
     class TLSTestServer(HTTPServer):
         def get_request(self):
@@ -874,6 +1029,120 @@ Sydvx0FeNWmqPBhmlaj0SqH0
             response.close()
 
         assert requests_seen["count"] == 1
+
+        assert received_sni == [
+            "localhost",
+            "wrong.example",
+            "localhost",
+        ]
+
+        # Integrated local socket and TLS verification through the scanner.
+        from requests.adapters import HTTPAdapter
+        from urllib3.util import connection as urllib3_connection
+
+        received_sni.clear()
+
+        integrated_url = "https://localhost/integrated-check"
+        parsed_target = scanner_module.urlparse(integrated_url)
+        validated_target = (
+            parsed_target,
+            "localhost",
+            ["127.0.0.1"],
+        )
+        resolver_calls = []
+
+        def fake_resolver(url, deadline=None):
+            resolver_calls.append((url, deadline))
+            return validated_target, None
+
+        monkeypatch.setattr(
+            scanner_module,
+            "resolve_target_with_status",
+            fake_resolver,
+        )
+
+        real_create_connection = urllib3_connection.create_connection
+        socket_observation = {}
+
+        def route_to_test_server(address, *args, **kwargs):
+            socket_observation["requested_address"] = address
+            assert address == ("127.0.0.1", 443)
+
+            connected_socket = real_create_connection(
+                ("127.0.0.1", server.server_port),
+                *args,
+                **kwargs,
+            )
+            socket_observation["peer"] = connected_socket.getpeername()
+            return connected_socket
+
+        monkeypatch.setattr(
+            urllib3_connection,
+            "create_connection",
+            route_to_test_server,
+        )
+
+        real_cert_verify = HTTPAdapter.cert_verify
+
+        def trust_test_certificate(adapter, connection, url, verify, cert):
+            return real_cert_verify(
+                adapter,
+                connection,
+                url,
+                str(certificate_path),
+                cert,
+            )
+
+        monkeypatch.setattr(
+            HTTPAdapter,
+            "cert_verify",
+            trust_test_certificate,
+        )
+
+        integrated_status, integrated_headers, integrated_error = (
+            scanner_module._safe_get_response(integrated_url)
+        )
+
+        assert resolver_calls == [(integrated_url, None)]
+        assert integrated_status == 200
+        assert integrated_error is None
+        assert socket_observation["requested_address"] == (
+            "127.0.0.1",
+            443,
+        )
+        assert socket_observation["peer"] == (
+            "127.0.0.1",
+            server.server_port,
+        )
+        assert received_sni == ["localhost"]
+        assert requests_seen["count"] == 2
+
+        # A real local HTTPS response exceeding Python's header limit.
+        malformed_headers["enabled"] = True
+
+        bad_status, bad_headers, bad_error = (
+            scanner_module._safe_get_response(integrated_url)
+        )
+
+        assert bad_status is None
+        assert bad_headers == {}
+        assert bad_error == "connection"
+        assert requests_seen["count"] == 3
+        assert received_sni == ["localhost", "localhost"]
+
+        # Reject a single HTTP header exceeding Python's line limit.
+        malformed_headers["enabled"] = False
+        malformed_headers["oversized"] = True
+
+        oversized_status, oversized_headers, oversized_error = (
+            scanner_module._safe_get_response(integrated_url)
+        )
+
+        assert oversized_status is None
+        assert oversized_headers == {}
+        assert oversized_error == "connection"
+        assert requests_seen["count"] == 4
+        assert received_sni == ["localhost", "localhost", "localhost"]
 
     finally:
         session.close()
@@ -975,6 +1244,11 @@ def test_safe_get_response_applies_remaining_deadline(monkeypatch):
         "fe80::1",
         "2001:db8::1",
         "ff02::1",
+        "5f00::1",
+        "100:0:0:1::1",
+        "fec0::1",
+        "4000::1",
+        "8000::1",
     ],
 )
 def test_reject_non_global_ips_before_http_request(
@@ -1225,3 +1499,86 @@ def test_https_unknown_error_is_not_passed(monkeypatch):
 
     assert result["status"] == "error"
     assert result["status"] != "passed"
+
+def test_http_request_exception_returns_connection_and_closes_session(monkeypatch):
+    parsed = scanner_module.urlparse("https://example.com/")
+    resolved_target = (
+        parsed,
+        "example.com",
+        ["93.184.216.34"],
+    )
+
+    class FakeSession:
+        def __init__(self):
+            self.trust_env = True
+            self.closed = False
+
+        def mount(self, prefix, adapter):
+            pass
+
+        def get(self, url, **kwargs):
+            raise requests.exceptions.ConnectionError(
+                "Simulated malformed HTTP response"
+            )
+
+        def close(self):
+            self.closed = True
+
+    session = FakeSession()
+
+    monkeypatch.setattr(
+        scanner_module.requests,
+        "Session",
+        lambda: session,
+    )
+
+    status, headers, error = scanner_module._safe_get_response(
+        "https://example.com/",
+        resolved_target=resolved_target,
+    )
+
+    assert status is None
+    assert headers == {}
+    assert error == "connection"
+    assert session.closed is True
+
+
+
+def test_requests_combined_duplicate_security_headers_warn():
+    from urllib3._collections import HTTPHeaderDict
+    from requests.structures import CaseInsensitiveDict
+
+    headers = HTTPHeaderDict()
+    headers.add("Strict-Transport-Security", "max-age=31536000")
+    headers.add("Strict-Transport-Security", "max-age=0")
+    headers.add("X-Frame-Options", "DENY")
+    headers.add("X-Frame-Options", "SAMEORIGIN")
+    headers.add("X-Content-Type-Options", "invalid")
+    headers.add("X-Content-Type-Options", "nosniff")
+
+    requests_headers = CaseInsensitiveDict(headers)
+    results = check_security_headers(requests_headers)
+
+    assert results["HSTS"]["status"] == "warning"
+    assert results["X-Frame-Options"]["status"] == "warning"
+    assert results["X-Content-Type-Options"]["status"] == "warning"
+
+
+
+def test_security_header_normalization_ignores_unneeded_headers():
+    class UnusedHeaderValue:
+        def __str__(self):
+            raise AssertionError("Unneeded header value was accessed")
+
+    headers = {
+        "Strict-Transport-Security": "max-age=31536000",
+        "Set-Cookie": UnusedHeaderValue(),
+        "Server": UnusedHeaderValue(),
+    }
+
+    results = check_security_headers(headers)
+
+    assert results["HSTS"]["status"] == "passed"
+    assert results["X-Content-Type-Options"]["status"] == "warning"
+    assert results["X-Frame-Options"]["status"] == "warning"
+    assert results["CSP"]["status"] == "warning"

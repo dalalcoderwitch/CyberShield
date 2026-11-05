@@ -30,26 +30,20 @@ _BLOCKED_IPV6_NETWORKS = tuple(
 )
 
 
-def _resolve_dns_with_timeout(
-    hostname: str,
-    deadline: float | None = None,
-):
-    """
-    تنفيذ DNS بمهلة محددة وسعة متزامنة محدودة.
-
-    لا يمكن إلغاء getaddrinfo المعلق مباشرةً. لذلك، إذا انتهت
-    المهلة، تُرفض العملية وتبقى خانتها مشغولة إلى أن تنتهي
-    عملية DNS الخلفية. يمنع هذا إنشاء عدد غير محدود من العمال.
-    """
+def _resolve_dns_with_status(hostname: str, deadline=None):
+    """Return DNS addresses and a precise resolution error, if any."""
     timeout = _DNS_TIMEOUT_SECONDS
+
     if deadline is not None:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
-            return None
+            return None, "timeout"
         timeout = min(timeout, remaining)
 
     if not _DNS_LOOKUP_SLOTS.acquire(blocking=False):
-        return None
+        if deadline is not None and time.monotonic() >= deadline:
+            return None, "timeout"
+        return None, "dns_capacity"
 
     result_queue = Queue(maxsize=1)
 
@@ -64,9 +58,12 @@ def _resolve_dns_with_timeout(
                     proto=socket.IPPROTO_TCP,
                 )
             except Exception:
-                addresses = None
-
-            result_queue.put(addresses)
+                result_queue.put((None, "dns_error"))
+            else:
+                if addresses:
+                    result_queue.put((addresses, None))
+                else:
+                    result_queue.put((None, "dns_error"))
         finally:
             _DNS_LOOKUP_SLOTS.release()
 
@@ -80,12 +77,24 @@ def _resolve_dns_with_timeout(
         worker.start()
     except RuntimeError:
         _DNS_LOOKUP_SLOTS.release()
-        return None
+        return None, "dns_capacity"
 
     try:
         return result_queue.get(timeout=timeout)
     except Empty:
-        return None
+        if deadline is not None and time.monotonic() >= deadline:
+            return None, "timeout"
+        return None, "dns_timeout"
+
+
+def _resolve_dns_with_timeout(hostname: str, deadline=None):
+    """Compatibility wrapper returning addresses or None."""
+    addresses, _error = _resolve_dns_with_status(
+        hostname,
+        deadline=deadline,
+    )
+    return addresses
+
 
 
 def _is_allowed_ip(
@@ -98,6 +107,10 @@ def _is_allowed_ip(
         return False
 
     if isinstance(ip, ipaddress.IPv6Address):
+        # Reject IETF-reserved IPv6 and deprecated site-local space.
+        if ip.is_reserved or ip.is_site_local:
+            return False
+
         # رفض IPv4 المضمن وTeredo و6to4.
         if (
             ip.ipv4_mapped is not None
@@ -141,24 +154,21 @@ class PinnedIPAdapter(HTTPAdapter):
         )
 
 
-def _resolve_target(url: str, deadline: float | None = None):
-    """
-    التحقق من الرابط وحصر الاتصال بعناوين IP مسموحة.
-    لا يرسل هذا الإجراء أي طلب HTTP.
-    """
+def _resolve_target_with_status(url: str, deadline=None):
+    """Validate a target and preserve the reason when resolution fails."""
     if (
         not isinstance(url, str)
         or not url
         or len(url) > 2048
         or any(ord(char) < 32 or ord(char) == 127 for char in url)
     ):
-        return None
+        return None, "invalid"
 
     try:
         parsed = urlparse(url)
         port = parsed.port
     except ValueError:
-        return None
+        return None, "invalid"
 
     if (
         parsed.scheme.lower() != "https"
@@ -168,7 +178,7 @@ def _resolve_target(url: str, deadline: float | None = None):
         or port not in (None, 443)
         or "\\" in parsed.netloc
     ):
-        return None
+        return None, "invalid"
 
     try:
         hostname = (
@@ -178,10 +188,10 @@ def _resolve_target(url: str, deadline: float | None = None):
             .rstrip(".")
         )
     except UnicodeError:
-        return None
+        return None, "invalid"
 
     if not hostname:
-        return None
+        return None, "invalid"
 
     blocked_suffixes = (
         ".localhost",
@@ -191,53 +201,70 @@ def _resolve_target(url: str, deadline: float | None = None):
     )
 
     if hostname == "localhost" or hostname.endswith(blocked_suffixes):
-        return None
+        return None, "invalid"
 
     if deadline is None:
-        addresses = _resolve_dns_with_timeout(hostname)
+        addresses, dns_error = _resolve_dns_with_status(hostname)
     else:
-        addresses = _resolve_dns_with_timeout(hostname, deadline=deadline)
+        addresses, dns_error = _resolve_dns_with_status(
+            hostname,
+            deadline=deadline,
+        )
+
+    if dns_error is not None:
+        return None, dns_error
 
     if not addresses or len(addresses) > 32:
-        return None
+        return None, "invalid"
 
     public_ips = []
 
     for address in addresses:
-        if address[0] not in (socket.AF_INET, socket.AF_INET6):
-            return None
-
         try:
+            family = address[0]
             raw_ip = address[4][0].split("%", 1)[0]
             ip = ipaddress.ip_address(raw_ip)
-        except (ValueError, IndexError, TypeError):
-            return None
+        except (ValueError, IndexError, TypeError, AttributeError):
+            return None, "invalid"
 
-        # نرفض جميع النتائج إذا وُجد عنوان غير مسموح.
+        if family not in (socket.AF_INET, socket.AF_INET6):
+            return None, "invalid"
+
         if not _is_allowed_ip(ip):
-            return None
+            return None, "invalid"
 
         if ip.compressed not in public_ips:
             public_ips.append(ip.compressed)
 
     if not public_ips:
-        return None
+        return None, "invalid"
 
-    # تفضيل IPv4 عندما يتوفر.
     public_ips.sort(key=lambda value: ":" in value)
+    return (parsed, hostname, public_ips), None
 
-    return parsed, hostname, public_ips
+
+def _resolve_target(url: str, deadline=None):
+    """Compatibility wrapper returning a target or None."""
+    target, _error = _resolve_target_with_status(
+        url,
+        deadline=deadline,
+    )
+    return target
 
 
-def resolve_target(url: str, deadline: float | None = None):
-    """
-    حل الرابط والتحقق منه مرة واحدة.
+def resolve_target_with_status(url: str, deadline=None):
+    """Public detailed resolver for coordinated scanner/API integration."""
+    return _resolve_target_with_status(url, deadline=deadline)
 
-    تُمرر النتيجة إلى محرك الفحص لتجنب إعادة حل DNS.
-    """
-    if deadline is None:
-        return _resolve_target(url)
-    return _resolve_target(url, deadline=deadline)
+
+def resolve_target(url: str, deadline=None):
+    """Backward-compatible resolver returning a target or None."""
+    target, _error = resolve_target_with_status(
+        url,
+        deadline=deadline,
+    )
+    return target
+
 
 
 def validate_url(url: str) -> bool:
@@ -258,12 +285,16 @@ def _safe_get_response(
     """
     if resolved_target is not None:
         target = resolved_target
-    elif deadline is None:
-        target = _resolve_target(url)
+        resolution_error = None
     else:
-        target = _resolve_target(url, deadline=deadline)
+        target, resolution_error = resolve_target_with_status(
+            url,
+            deadline=deadline,
+        )
 
     if target is None:
+        if resolution_error is not None:
+            return None, {}, resolution_error
         if deadline is not None and time.monotonic() >= deadline:
             return None, {}, "timeout"
         return None, {}, "invalid"
@@ -388,10 +419,27 @@ def check_security_headers(headers: dict) -> dict:
     if not hasattr(headers, "items"):
         headers = {}
 
-    normalized = {
-        str(key).lower(): str(value)
-        for key, value in headers.items()
+    security_header_names = {
+        "strict-transport-security",
+        "content-security-policy",
+        "x-content-type-options",
+        "x-frame-options",
     }
+
+    normalized = {}
+
+    for key, value in headers.items():
+        normalized_key = str(key).lower()
+
+        if normalized_key not in security_header_names:
+            continue
+
+        normalized_value = str(value)
+
+        if normalized_key in normalized:
+            normalized[normalized_key] += ", " + normalized_value
+        else:
+            normalized[normalized_key] = normalized_value
 
     results = {}
 
