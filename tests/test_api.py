@@ -842,3 +842,48 @@ def test_scan_rejects_non_json_content_type():
 
     assert response.status_code == 400
     assert response.json["error"]["code"] == "INVALID_REQUEST"
+
+def test_scan_rate_limit_ignores_untrusted_forwarded_for(monkeypatch):
+    """Untrusted X-Forwarded-For must not bypass the source rate limit."""
+
+    app = api_module.create_app()
+    client = app.test_client()
+    scan_calls = []
+
+    monkeypatch.setattr(
+        api_module,
+        "resolve_target",
+        lambda url, deadline=None: object(),
+    )
+
+    def fake_scan(url, resolved_target=None, deadline=None):
+        scan_calls.append(url)
+        return {"status": "completed"}
+
+    monkeypatch.setattr(api_module, "scan_target", fake_scan)
+
+    payload = {
+        "target_url": "https://example.com",
+        "authorization_confirmed": True,
+    }
+    source = "198.51.100.30"
+
+    for index in range(5):
+        response = client.post(
+            "/api/v1/scan",
+            json=payload,
+            environ_overrides={"REMOTE_ADDR": source},
+            headers={"X-Forwarded-For": f"203.0.113.{index + 1}"},
+        )
+        assert response.status_code == 200
+
+    response = client.post(
+        "/api/v1/scan",
+        json=payload,
+        environ_overrides={"REMOTE_ADDR": source},
+        headers={"X-Forwarded-For": "203.0.113.99"},
+    )
+
+    assert response.status_code == 429
+    assert response.json["error"]["code"] == "RATE_LIMIT_EXCEEDED"
+    assert len(scan_calls) == 5
