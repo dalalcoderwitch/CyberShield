@@ -1328,6 +1328,26 @@ def test_scan_rate_limit_expires_at_exactly_sixty_seconds(monkeypatch):
     assert response.status_code == 429
 
     clock["now"] = 1060.0
-
     response = client.post("/api/v1/scan", json=payload)
     assert response.status_code == 200
+
+
+def test_scan_options_does_not_start_scan(monkeypatch):
+    app = api_module.create_app()
+    client = app.test_client()
+
+    calls = []
+
+    def unexpected_call(*args, **kwargs):
+        calls.append((args, kwargs))
+        raise AssertionError("OPTIONS must not start a scan")
+
+    monkeypatch.setattr(api_module, "resolve_target", unexpected_call)
+    monkeypatch.setattr(api_module, "scan_target", unexpected_call)
+
+    response = client.options("/api/v1/scan")
+
+    assert response.status_code == 200
+    assert "POST" in response.headers.get("Allow", "")
+    assert "OPTIONS" in response.headers.get("Allow", "")
+    assert calls == []
