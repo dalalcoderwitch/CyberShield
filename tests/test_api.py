@@ -1213,3 +1213,32 @@ def test_scan_releases_capacity_after_scan_timeout(monkeypatch):
 
     assert len(resolution_calls) == 2
     assert len(scan_calls) == 2
+def test_scan_does_not_start_scanner_for_disallowed_target(monkeypatch):
+    app = api_module.create_app()
+    client = app.test_client()
+
+    scan_calls = []
+
+    monkeypatch.setattr(
+        api_module,
+        "resolve_target",
+        lambda url, deadline=None: None,
+    )
+
+    def fake_scan(*args, **kwargs):
+        scan_calls.append((args, kwargs))
+        return {"status": "completed"}
+
+    monkeypatch.setattr(api_module, "scan_target", fake_scan)
+
+    response = client.post(
+        "/api/v1/scan",
+        json={
+            "target_url": "https://example.com",
+            "authorization_confirmed": True,
+        },
+    )
+
+    assert response.status_code == 403
+    assert response.json["error"]["code"] == "TARGET_NOT_ALLOWED"
+    assert scan_calls == []
