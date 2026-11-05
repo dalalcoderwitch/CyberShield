@@ -247,53 +247,110 @@ def scan_target(
             )
         )
     else:
+        https_severity = "medium"
+        https_confidence = "high"
+        recommendation = (
+            "\u062a\u062d\u0642\u0642\u064a \u0645\u0646 \u0635\u0644\u0627\u062d\u064a\u0629 \u0627\u0644\u0631\u0627\u0628\u0637 \u0648\u0625\u0645\u0643\u0627\u0646\u064a\u0629 \u0627\u0644\u0648\u0635\u0648\u0644 \u0648\u0635\u062d\u0629 \u0625\u0639\u062f\u0627\u062f TLS\u060c \u062b\u0645 \u0623\u0639\u064a\u062f\u064a \u0627\u0644\u0641\u062d\u0635."
+        )
+
         if error == "invalid":
             https_status = "warning"
             explanation = (
-                "الرابط غير صالح أو لا يطابق قيود الفحص."
+                "\u0627\u0644\u0631\u0627\u0628\u0637 \u063a\u064a\u0631 \u0635\u0627\u0644\u062d \u0623\u0648 \u0644\u0627 \u064a\u0637\u0627\u0628\u0642 \u0642\u064a\u0648\u062f \u0627\u0644\u0641\u062d\u0635."
             )
+
         elif error == "tls":
             https_status = "warning"
             explanation = (
-                "تعذر التحقق من شهادة TLS؛ "
-                "لم يُعتبر الاتصال ناجحًا."
+                "\u062a\u0639\u0630\u0631 \u0627\u0644\u062a\u062d\u0642\u0642 \u0645\u0646 \u0634\u0647\u0627\u062f\u0629 TLS\u061b \u0644\u0645 \u064a\u064f\u0639\u062a\u0628\u0631 \u0627\u0644\u0627\u062a\u0635\u0627\u0644 \u0646\u0627\u062c\u062d\u064b\u0627."
             )
+
         elif error == "timeout":
             https_status = "error"
             explanation = (
-                "انتهت المهلة الزمنية المسموحة قبل اكتمال الاتصال أو الاستجابة."
+                "\u0627\u0646\u062a\u0647\u062a \u0627\u0644\u0645\u0647\u0644\u0629 \u0627\u0644\u0632\u0645\u0646\u064a\u0629 \u0627\u0644\u0645\u0633\u0645\u0648\u062d\u0629 \u0642\u0628\u0644 \u0627\u0643\u062a\u0645\u0627\u0644 \u0627\u0644\u0627\u062a\u0635\u0627\u0644 \u0623\u0648 \u0627\u0644\u0627\u0633\u062a\u062c\u0627\u0628\u0629."
             )
+
+        elif error == "dns_timeout":
+            https_status = "error"
+            https_severity = "info"
+            explanation = (
+                "\u0627\u0646\u062a\u0647\u062a \u0645\u0647\u0644\u0629 \u0627\u0646\u062a\u0638\u0627\u0631 DNS \u0642\u0628\u0644 \u0627\u0644\u062d\u0635\u0648\u0644 \u0639\u0644\u0649 \u0646\u062a\u064a\u062c\u0629\u061b \u0644\u0627 \u064a\u0639\u0646\u064a \u0630\u0644\u0643 \u0623\u0646 \u0627\u0644\u0631\u0627\u0628\u0637 \u063a\u064a\u0631 \u0635\u0627\u0644\u062d."
+            )
+            recommendation = (
+                "\u062a\u062d\u0642\u0642\u064a \u0645\u0646 \u0633\u0631\u0639\u0629 \u0627\u0633\u062a\u062c\u0627\u0628\u0629 DNS \u0648\u0625\u0645\u0643\u0627\u0646\u064a\u0629 \u0627\u0644\u0648\u0635\u0648\u0644 \u0625\u0644\u0649 \u062e\u0627\u062f\u0645 \u0627\u0644\u0623\u0633\u0645\u0627\u0621\u060c \u062b\u0645 \u0623\u0639\u064a\u062f\u064a \u0627\u0644\u0641\u062d\u0635."
+            )
+
+        elif error == "dns_error":
+            https_status = "error"
+            https_severity = "info"
+            explanation = (
+                "\u062a\u0639\u0630\u0631 \u062d\u0644 \u0627\u0633\u0645 \u0627\u0644\u0646\u0637\u0627\u0642 \u0639\u0628\u0631 DNS\u061b \u0644\u0627 \u064a\u0645\u0643\u0646 \u0627\u0644\u062c\u0632\u0645 \u0628\u0623\u0646 \u0627\u0644\u0647\u062f\u0641 \u063a\u064a\u0631 \u0635\u0627\u0644\u062d."
+            )
+            recommendation = (
+                "\u062a\u062d\u0642\u0642\u064a \u0645\u0646 \u0633\u062c\u0644 DNS \u0648\u0625\u0645\u0643\u0627\u0646\u064a\u0629 \u0627\u0644\u0648\u0635\u0648\u0644 \u0625\u0644\u0649 \u062e\u0627\u062f\u0645 \u0627\u0644\u0623\u0633\u0645\u0627\u0621\u060c \u062b\u0645 \u0623\u0639\u064a\u062f\u064a \u0627\u0644\u0641\u062d\u0635."
+            )
+
+        elif error == "dns_capacity":
+            https_status = "skipped"
+            https_severity = "info"
+            https_confidence = "low"
+            explanation = (
+                "\u0644\u0645 \u062a\u062a\u0648\u0641\u0631 \u0633\u0639\u0629 DNS \u0644\u0628\u062f\u0621 \u0627\u0644\u062a\u062d\u0642\u0642 \u0645\u0646 \u0627\u0644\u0647\u062f\u0641\u061b \u0644\u0645 \u064a\u062a\u0645 \u062a\u0646\u0641\u064a\u0630 \u0641\u062d\u0635 \u0627\u0644\u0627\u062a\u0635\u0627\u0644."
+            )
+            recommendation = (
+                "\u0623\u0639\u064a\u062f\u064a \u0627\u0644\u0645\u062d\u0627\u0648\u0644\u0629 \u0644\u0627\u062d\u0642\u064b\u0627 \u0628\u0639\u062f \u062a\u0648\u0641\u0631 \u0633\u0639\u0629 \u0644\u0641\u062d\u0648\u0635\u0627\u062a DNS."
+            )
+
         else:
             https_status = "error"
-            explanation = "تعذر الاتصال بالموقع."
+            explanation = (
+                "\u062a\u0639\u0630\u0631 \u0627\u0644\u0627\u062a\u0635\u0627\u0644 \u0628\u0627\u0644\u0645\u0648\u0642\u0639."
+            )
 
         findings.append(
             _make_finding(
                 check_id="https_connection",
-                title="اتصال HTTPS والتحقق من شهادة TLS",
+                title="\u0627\u062a\u0635\u0627\u0644 HTTPS \u0648\u0627\u0644\u062a\u062d\u0642\u0642 \u0645\u0646 \u0634\u0647\u0627\u062f\u0629 TLS",
                 status=https_status,
-                severity="medium",
-                confidence="high",
-                evidence=f"لم يكتمل الفحص. نوع النتيجة: {error}.",
-                explanation=explanation,
-                recommendation=(
-                    "تحققي من صلاحية الرابط وإمكانية الوصول "
-                    "وصحة إعداد TLS، ثم أعيدي الفحص."
+                severity=https_severity,
+                confidence=https_confidence,
+                evidence=(
+                    "\u0644\u0645 \u064a\u0643\u062a\u0645\u0644 \u0627\u0644\u0641\u062d\u0635. "
+                    f"\u0646\u0648\u0639 \u0627\u0644\u0646\u062a\u064a\u062c\u0629: {error}."
                 ),
+                explanation=explanation,
+                recommendation=recommendation,
                 limitations=[
-                    "لم يتم الحصول على استجابة صالحة لفحص الترويسات."
+                    "\u0644\u0645 \u064a\u062a\u0645 \u0627\u0644\u062d\u0635\u0648\u0644 \u0639\u0644\u0649 \u0627\u0633\u062a\u062c\u0627\u0628\u0629 \u0635\u0627\u0644\u062d\u0629 \u0644\u0641\u062d\u0635 \u0627\u0644\u062a\u0631\u0648\u064a\u0633\u0627\u062a."
                 ],
             )
         )
 
-    # فحص الترويسات عند توفر استجابة.
     if error is None:
         header_results = check_security_headers(headers)
 
-        normalized_headers = {
-            str(key).lower(): str(value)
-            for key, value in headers.items()
+        security_header_names = {
+            "strict-transport-security",
+            "content-security-policy",
+            "x-content-type-options",
+            "x-frame-options",
         }
+
+        normalized_headers = {}
+
+        for key, value in headers.items():
+            normalized_key = str(key).lower()
+
+            if normalized_key not in security_header_names:
+                continue
+
+            normalized_value = str(value)
+
+            if normalized_key in normalized_headers:
+                normalized_headers[normalized_key] += ", " + normalized_value
+            else:
+                normalized_headers[normalized_key] = normalized_value
 
         for item in HEADER_CHECKS:
             header_name = item["header"]
@@ -309,12 +366,20 @@ def scan_target(
 
             if header_is_present:
                 evidence = (
-                    f"تم العثور على الترويسة {header_name}. "
-                    f"القيمة المرصودة: {header_value[:200]}"
+                    f"\u062a\u0645 \u0627\u0644\u0639\u062b\u0648\u0631 "
+                    f"\u0639\u0644\u0649 \u0627\u0644\u062a\u0631\u0648\u064a\u0633\u0629 {header_name}. "
+                    "\u0644\u0645 \u062a\u064f\u062f\u0631\u062c "
+                    "\u0627\u0644\u0642\u064a\u0645\u0629 \u0627\u0644\u062e\u0627\u0645 "
+                    "\u0641\u064a \u0627\u0644\u062a\u0642\u0631\u064a\u0631 "
+                    "\u0644\u062a\u062c\u0646\u0628 \u0643\u0634\u0641 "
+                    "\u0628\u064a\u0627\u0646\u0627\u062a \u0642\u062f "
+                    "\u062a\u0643\u0648\u0646 \u062d\u0633\u0627\u0633\u0629."
                 )
             else:
                 evidence = (
-                    f"الترويسة {header_name} غير موجودة أو فارغة."
+                    f"\u0627\u0644\u062a\u0631\u0648\u064a\u0633\u0629 {header_name} "
+                    "\u063a\u064a\u0631 \u0645\u0648\u062c\u0648\u062f\u0629 "
+                    "\u0623\u0648 \u0641\u0627\u0631\u063a\u0629."
                 )
 
             if item["key"] == "CSP":
