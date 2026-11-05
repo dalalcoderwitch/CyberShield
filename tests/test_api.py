@@ -917,3 +917,55 @@ def test_scan_requires_authorization_before_target_resolution(monkeypatch):
     assert response.status_code == 403
     assert response.json["error"]["code"] == "AUTHORIZATION_REQUIRED"
     assert calls == {"resolve": 0, "scan": 0}
+
+def test_scan_rate_limit_reclaims_expired_source_slots(monkeypatch):
+    """Expired source records must not block new sources."""
+
+    app = api_module.create_app()
+    client = app.test_client()
+    clock = {"now": 1000.0}
+
+    monkeypatch.setattr(
+        api_module,
+        "time",
+        SimpleNamespace(monotonic=lambda: clock["now"]),
+    )
+    monkeypatch.setattr(
+        api_module,
+        "_SCAN_RATE_LIMIT_MAX_SOURCES",
+        1,
+    )
+    monkeypatch.setattr(
+        api_module,
+        "resolve_target",
+        lambda url, deadline=None: object(),
+    )
+    monkeypatch.setattr(
+        api_module,
+        "scan_target",
+        lambda url, resolved_target=None, deadline=None: {
+            "status": "completed"
+        },
+    )
+
+    payload = {
+        "target_url": "https://example.com",
+        "authorization_confirmed": True,
+    }
+
+    first = client.post(
+        "/api/v1/scan",
+        json=payload,
+        environ_overrides={"REMOTE_ADDR": "198.51.100.30"},
+    )
+    assert first.status_code == 200
+
+    clock["now"] = 1061.0
+
+    second = client.post(
+        "/api/v1/scan",
+        json=payload,
+        environ_overrides={"REMOTE_ADDR": "198.51.100.31"},
+    )
+
+    assert second.status_code == 200
