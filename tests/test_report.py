@@ -437,6 +437,7 @@ def test_report_does_not_read_unneeded_header_values(monkeypatch):
     ("error", "expected_https_status"),
     [
         ("invalid", "warning"),
+        ("not_allowed", "warning"),
         ("connection", "error"),
         ("unexpected_error", "error"),
     ],
