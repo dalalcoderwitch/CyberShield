@@ -233,7 +233,7 @@ def test_private_dns_address_never_triggers_http_request(monkeypatch):
 
     assert status is None
     assert headers == {}
-    assert error == "invalid"
+    assert error == "not_allowed"
 
 
 @pytest.mark.parametrize(
@@ -275,7 +275,7 @@ def test_reject_ipv6_transition_addresses_before_http_request(
 
     assert status is None
     assert headers == {}
-    assert error == "invalid"
+    assert error == "not_allowed"
 
 
 def test_reject_dns_resolution_failure(monkeypatch):
@@ -1293,7 +1293,7 @@ def test_reject_non_global_ips_before_http_request(
 
     assert status is None
     assert headers == {}
-    assert error == "invalid"
+    assert error == "not_allowed"
 
 def test_http_timeout_returns_timeout_and_closes_session(monkeypatch):
     import time
@@ -1670,3 +1670,104 @@ def test_public_resolver_preserves_dns_failure_reason(
     assert target is None
     assert error == dns_error
     assert calls == [("example.com", 123.0)]
+
+@pytest.mark.parametrize(
+    ("target_url", "expected_error", "expected_dns_calls"),
+    [
+        ("http://example.com", "invalid", 0),
+        ("https://user:password@example.com", "invalid", 0),
+        ("https://example.com:8443", "invalid", 0),
+        ("https://localhost", "not_allowed", 0),
+        ("https://api.internal", "not_allowed", 0),
+        ("https://example.com", "not_allowed", 1),
+    ],
+)
+def test_public_resolver_separates_invalid_and_not_allowed(
+    monkeypatch,
+    target_url,
+    expected_error,
+    expected_dns_calls,
+):
+    dns_calls = []
+
+    def fake_dns(hostname, deadline=None):
+        dns_calls.append((hostname, deadline))
+        return [
+            (
+                socket.AF_INET,
+                socket.SOCK_STREAM,
+                socket.IPPROTO_TCP,
+                "",
+                ("192.168.1.20", 443),
+            )
+        ], None
+
+    monkeypatch.setattr(
+        scanner_module,
+        "_resolve_dns_with_status",
+        fake_dns,
+    )
+
+    target, error = scanner_module.resolve_target_with_status(target_url)
+
+    assert target is None
+    assert error == expected_error
+    assert len(dns_calls) == expected_dns_calls
+
+
+def test_public_resolver_success_and_legacy_wrapper(monkeypatch):
+    dns_calls = []
+
+    def fake_dns(hostname, deadline=None):
+        dns_calls.append((hostname, deadline))
+        return [
+            (
+                socket.AF_INET,
+                socket.SOCK_STREAM,
+                socket.IPPROTO_TCP,
+                "",
+                ("93.184.216.34", 443),
+            )
+        ], None
+
+    monkeypatch.setattr(
+        scanner_module,
+        "_resolve_dns_with_status",
+        fake_dns,
+    )
+
+    target_url = "https://example.com/security-check"
+
+    resolved_target, error = scanner_module.resolve_target_with_status(
+        target_url,
+        deadline=123.0,
+    )
+
+    assert error is None
+    assert resolved_target is not None
+    assert resolved_target[1] == "example.com"
+    assert resolved_target[2] == ["93.184.216.34"]
+
+    legacy_target = scanner_module.resolve_target(
+        target_url,
+        deadline=456.0,
+    )
+
+    assert legacy_target == resolved_target
+    assert dns_calls == [
+        ("example.com", 123.0),
+        ("example.com", 456.0),
+    ]
+
+
+def test_https_not_allowed_is_warning(monkeypatch):
+    monkeypatch.setattr(
+        scanner_module,
+        "_safe_get_response",
+        lambda url: (None, {}, "not_allowed"),
+    )
+
+    result = check_https("https://example.com")
+
+    assert result["status"] == "warning"
+    assert "\u0645\u062d\u0638\u0648\u0631" in result["message"]

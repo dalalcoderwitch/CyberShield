@@ -201,7 +201,7 @@ def _resolve_target_with_status(url: str, deadline=None):
     )
 
     if hostname == "localhost" or hostname.endswith(blocked_suffixes):
-        return None, "invalid"
+        return None, "not_allowed"
 
     if deadline is None:
         addresses, dns_error = _resolve_dns_with_status(hostname)
@@ -214,8 +214,11 @@ def _resolve_target_with_status(url: str, deadline=None):
     if dns_error is not None:
         return None, dns_error
 
-    if not addresses or len(addresses) > 32:
-        return None, "invalid"
+    if not addresses:
+        return None, "dns_error"
+
+    if len(addresses) > 32:
+        return None, "not_allowed"
 
     public_ips = []
 
@@ -225,23 +228,23 @@ def _resolve_target_with_status(url: str, deadline=None):
             raw_ip = address[4][0].split("%", 1)[0]
             ip = ipaddress.ip_address(raw_ip)
         except (ValueError, IndexError, TypeError, AttributeError):
-            return None, "invalid"
+            return None, "dns_error"
 
         if family not in (socket.AF_INET, socket.AF_INET6):
-            return None, "invalid"
+            return None, "dns_error"
 
         expected_version = 4 if family == socket.AF_INET else 6
         if ip.version != expected_version:
-            return None, "invalid"
+            return None, "dns_error"
 
         if not _is_allowed_ip(ip):
-            return None, "invalid"
+            return None, "not_allowed"
 
         if ip.compressed not in public_ips:
             public_ips.append(ip.compressed)
 
     if not public_ips:
-        return None, "invalid"
+        return None, "dns_error"
 
     public_ips.sort(key=lambda value: ":" in value)
     return (parsed, hostname, public_ips), None
@@ -383,6 +386,12 @@ def check_https(url: str) -> dict:
         return {
             "status": "warning",
             "message": "\u0627\u0644\u0631\u0627\u0628\u0637 \u063a\u064a\u0631 \u0635\u0627\u0644\u062d \u0623\u0648 \u063a\u064a\u0631 \u0645\u0633\u0645\u0648\u062d \u0628\u0641\u062d\u0635\u0647",
+        }
+
+    if error == "not_allowed":
+        return {
+            "status": "warning",
+            "message": "\u0627\u0644\u0647\u062f\u0641 \u0645\u062d\u0638\u0648\u0631 \u0648\u0641\u0642 \u0633\u064a\u0627\u0633\u0629 \u0627\u0644\u062d\u0645\u0627\u064a\u0629 \u0648\u0644\u0627 \u064a\u0645\u0643\u0646 \u0641\u062d\u0635\u0647.",
         }
 
     if error == "tls":
