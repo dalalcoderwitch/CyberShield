@@ -10,13 +10,13 @@ from requests.adapters import HTTPAdapter
 from urllib3 import PoolManager
 
 
-# حدود DNS: مهلة لكل محاولة وأربع محاولات متزامنة كحد أقصى.
+# DNS limits: per-attempt timeout and at most four concurrent attempts.
 _DNS_TIMEOUT_SECONDS = 2.0
 _DNS_MAX_CONCURRENT_LOOKUPS = 4
 _DNS_LOOKUP_SLOTS = BoundedSemaphore(_DNS_MAX_CONCURRENT_LOOKUPS)
 
 
-# نرفض أشكال IPv6 الانتقالية المعروفة في هذه النسخة من الماسح.
+# Reject known IPv6 transition mechanisms in this scanner version.
 _BLOCKED_IPV6_NETWORKS = tuple(
     ipaddress.ip_network(prefix)
     for prefix in (
@@ -100,9 +100,9 @@ def _resolve_dns_with_timeout(hostname: str, deadline=None):
 def _is_allowed_ip(
     ip: ipaddress.IPv4Address | ipaddress.IPv6Address,
 ) -> bool:
-    """رفض العناوين غير العامة والعناوين الانتقالية المحظورة."""
+    """Reject non-public addresses and prohibited transition addresses."""
 
-    # لا نسمح إلا بالعناوين العامة، مع رفض Multicast صراحةً.
+    # Allow only public addresses and explicitly reject multicast.
     if not ip.is_global or ip.is_multicast:
         return False
 
@@ -111,7 +111,7 @@ def _is_allowed_ip(
         if ip.is_reserved or ip.is_site_local:
             return False
 
-        # رفض IPv4 المضمن وTeredo و6to4.
+        # Reject IPv4-mapped, Teredo, and 6to4 addresses.
         if (
             ip.ipv4_mapped is not None
             or ip.teredo is not None
@@ -119,14 +119,14 @@ def _is_allowed_ip(
         ):
             return False
 
-        # رفض شبكات IPv6 الانتقالية المحظورة في سياسة المشروع.
+        # Reject IPv6 transition networks prohibited by project policy.
         if any(ip in network for network in _BLOCKED_IPV6_NETWORKS):
             return False
 
     return True
 
 class PinnedIPAdapter(HTTPAdapter):
-    """الاتصال بعنوان IP محدد مع التحقق من اسم الموقع عبر TLS."""
+    """Connect to a specific IP address while verifying the hostname through TLS."""
 
     def __init__(self, hostname: str):
         self.hostname = hostname
@@ -230,6 +230,10 @@ def _resolve_target_with_status(url: str, deadline=None):
         if family not in (socket.AF_INET, socket.AF_INET6):
             return None, "invalid"
 
+        expected_version = 4 if family == socket.AF_INET else 6
+        if ip.version != expected_version:
+            return None, "invalid"
+
         if not _is_allowed_ip(ip):
             return None, "invalid"
 
@@ -268,7 +272,7 @@ def resolve_target(url: str, deadline=None):
 
 
 def validate_url(url: str) -> bool:
-    """التحقق من الرابط دون إرسال طلب HTTP."""
+    """Validate the URL without sending an HTTP request."""
     return resolve_target(url) is not None
 
 
@@ -278,10 +282,10 @@ def _safe_get_response(
     deadline: float | None = None,
 ):
     """
-    إرسال طلب HTTPS واحد إلى عنوان IP اجتاز سياسة الهدف.
+    Send a single HTTPS request to an IP address that passed the target policy.
 
-    إذا مررت طبقة API نتيجة التحقق السابقة، يعاد استخدامها
-    بدل إجراء عملية DNS جديدة.
+    If the API layer supplies the result of the previous validation, reuse it
+    instead of performing another DNS lookup.
     """
     if resolved_target is not None:
         target = resolved_target
@@ -371,50 +375,50 @@ def _safe_get_response(
 
 
 def check_https(url: str) -> dict:
-    """التحقق من اتصال HTTPS وشهادة TLS دون اعتبار الأخطاء نجاحًا."""
+    """Verify the HTTPS connection and TLS certificate without treating errors as success."""
 
     status_code, _, error = _safe_get_response(url)
 
     if error == "invalid":
         return {
             "status": "warning",
-            "message": "الرابط غير صالح أو غير مسموح بفحصه",
+            "message": "\u0627\u0644\u0631\u0627\u0628\u0637 \u063a\u064a\u0631 \u0635\u0627\u0644\u062d \u0623\u0648 \u063a\u064a\u0631 \u0645\u0633\u0645\u0648\u062d \u0628\u0641\u062d\u0635\u0647",
         }
 
     if error == "tls":
         return {
             "status": "warning",
-            "message": "تعذر التحقق من شهادة TLS",
+            "message": "\u062a\u0639\u0630\u0631 \u0627\u0644\u062a\u062d\u0642\u0642 \u0645\u0646 \u0634\u0647\u0627\u062f\u0629 TLS",
         }
 
     if error == "timeout":
         return {
             "status": "error",
-            "message": "انتهت المهلة الزمنية المسموحة للاتصال",
+            "message": "\u0627\u0646\u062a\u0647\u062a \u0627\u0644\u0645\u0647\u0644\u0629 \u0627\u0644\u0632\u0645\u0646\u064a\u0629 \u0627\u0644\u0645\u0633\u0645\u0648\u062d\u0629 \u0644\u0644\u0627\u062a\u0635\u0627\u0644",
         }
 
-    # أي خطأ آخر غير متوقع يجب ألا يتحول إلى نجاح.
+    # Any other unexpected error must not be treated as success.
     if error is not None:
         return {
             "status": "error",
-            "message": "تعذر الاتصال بالموقع",
+            "message": "\u062a\u0639\u0630\u0631 \u0627\u0644\u0627\u062a\u0635\u0627\u0644 \u0628\u0627\u0644\u0645\u0648\u0642\u0639",
         }
 
-    # لا نعتبر العملية ناجحة دون رمز استجابة HTTP فعلي.
+    # Do not report success without an actual HTTP response code.
     if status_code is None:
         return {
             "status": "error",
-            "message": "لم يتم الحصول على استجابة HTTP صالحة",
+            "message": "\u0644\u0645 \u064a\u062a\u0645 \u0627\u0644\u062d\u0635\u0648\u0644 \u0639\u0644\u0649 \u0627\u0633\u062a\u062c\u0627\u0628\u0629 HTTP \u0635\u0627\u0644\u062d\u0629",
         }
 
     return {
         "status": "passed",
-        "message": "نجح الاتصال والتحقق من شهادة TLS",
+        "message": "\u0646\u062c\u062d \u0627\u0644\u0627\u062a\u0635\u0627\u0644 \u0648\u0627\u0644\u062a\u062d\u0642\u0642 \u0645\u0646 \u0634\u0647\u0627\u062f\u0629 TLS",
     }
 
 
 def check_security_headers(headers: dict) -> dict:
-    """فحص وجود ترويسات الحماية وصحة قيمها الأولية."""
+    """Check for security header presence and basic value validity."""
 
     if not hasattr(headers, "items"):
         headers = {}
@@ -455,7 +459,7 @@ def check_security_headers(headers: dict) -> dict:
 
     hsts_ok = False
 
-    # نقبل max-age واحدة فقط، بأرقام ASCII، وقيمة موجبة.
+    # Accept only one max-age directive, using ASCII digits and a positive value.
     if len(max_age_values) == 1:
         age_value = max_age_values[0]
 
@@ -465,9 +469,9 @@ def check_security_headers(headers: dict) -> dict:
     results["HSTS"] = {
         "status": "passed" if hsts_ok else "warning",
         "message": (
-            "قيمة max-age موجبة وصيغتها الأولية مقبولة"
+            "\u0642\u064a\u0645\u0629 max-age \u0645\u0648\u062c\u0628\u0629 \u0648\u0635\u064a\u063a\u062a\u0647\u0627 \u0627\u0644\u0623\u0648\u0644\u064a\u0629 \u0645\u0642\u0628\u0648\u0644\u0629"
             if hsts_ok
-            else "ترويسة HSTS مفقودة أو أن قيمة max-age غير صالحة"
+            else "\u062a\u0631\u0648\u064a\u0633\u0629 HSTS \u0645\u0641\u0642\u0648\u062f\u0629 \u0623\u0648 \u0623\u0646 \u0642\u064a\u0645\u0629 max-age \u063a\u064a\u0631 \u0635\u0627\u0644\u062d\u0629"
         ),
     }
 
@@ -475,13 +479,13 @@ def check_security_headers(headers: dict) -> dict:
     csp = normalized.get("content-security-policy", "").strip()
     csp_present = bool(csp)
 
-    # لا نعلن passed لأننا لا نحلل جودة سياسة CSP أو فعاليتها.
+    # Check CSP header presence only; policy quality and effectiveness are not evaluated.
     results["CSP"] = {
         "status": "warning",
         "message": (
-            "الترويسة موجودة؛ لم يتم تقييم جودة السياسة أو فعاليتها"
+            "\u0627\u0644\u062a\u0631\u0648\u064a\u0633\u0629 \u0645\u0648\u062c\u0648\u062f\u0629\u061b \u0644\u0645 \u064a\u062a\u0645 \u062a\u0642\u064a\u064a\u0645 \u062c\u0648\u062f\u0629 \u0627\u0644\u0633\u064a\u0627\u0633\u0629 \u0623\u0648 \u0641\u0639\u0627\u0644\u064a\u062a\u0647\u0627"
             if csp_present
-            else "ترويسة CSP مفقودة"
+            else "\u062a\u0631\u0648\u064a\u0633\u0629 CSP \u0645\u0641\u0642\u0648\u062f\u0629"
         ),
     }
 
@@ -495,9 +499,9 @@ def check_security_headers(headers: dict) -> dict:
     results["X-Content-Type-Options"] = {
         "status": "passed" if xcto == "nosniff" else "warning",
         "message": (
-            "القيمة nosniff صحيحة"
+            "\u0627\u0644\u0642\u064a\u0645\u0629 nosniff \u0635\u062d\u064a\u062d\u0629"
             if xcto == "nosniff"
-            else "الترويسة مفقودة أو قيمتها غير صحيحة"
+            else "\u0627\u0644\u062a\u0631\u0648\u064a\u0633\u0629 \u0645\u0641\u0642\u0648\u062f\u0629 \u0623\u0648 \u0642\u064a\u0645\u062a\u0647\u0627 \u063a\u064a\u0631 \u0635\u062d\u064a\u062d\u0629"
         ),
     }
 
@@ -508,9 +512,9 @@ def check_security_headers(headers: dict) -> dict:
     results["X-Frame-Options"] = {
         "status": "passed" if xfo_ok else "warning",
         "message": (
-            "قيمة الترويسة معروفة"
+            "\u0642\u064a\u0645\u0629 \u0627\u0644\u062a\u0631\u0648\u064a\u0633\u0629 \u0645\u0639\u0631\u0648\u0641\u0629"
             if xfo_ok
-            else "الترويسة مفقودة أو قيمتها غير معروفة"
+            else "\u0627\u0644\u062a\u0631\u0648\u064a\u0633\u0629 \u0645\u0641\u0642\u0648\u062f\u0629 \u0623\u0648 \u0642\u064a\u0645\u062a\u0647\u0627 \u063a\u064a\u0631 \u0645\u0639\u0631\u0648\u0641\u0629"
         ),
     }
 
