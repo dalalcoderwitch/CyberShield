@@ -432,3 +432,49 @@ def test_report_does_not_read_unneeded_header_values(monkeypatch):
 
     assert report["http_status"] == 200
     assert len(report["findings"]) == 5
+
+@pytest.mark.parametrize(
+    ("error", "expected_https_status"),
+    [
+        ("invalid", "warning"),
+        ("connection", "error"),
+        ("unexpected_error", "error"),
+    ],
+)
+def test_connection_errors_keep_headers_unverified(
+    monkeypatch,
+    error,
+    expected_https_status,
+):
+    monkeypatch.setattr(
+        "security_scanner.report._safe_get_response",
+        lambda url: (None, {}, error),
+    )
+
+    report = scan_target("https://example.com")
+    findings = {
+        item["check_id"]: item
+        for item in report["findings"]
+    }
+
+    https_finding = findings["https_connection"]
+    assert https_finding["status"] == expected_https_status
+    assert https_finding["severity"] == "medium"
+    assert https_finding["confidence"] == "high"
+    assert https_finding["evidence"].endswith(error + ".")
+    assert report["http_status"] is None
+
+    for check_id in (
+        "header_hsts",
+        "header_csp",
+        "header_x_content_type_options",
+        "header_x_frame_options",
+    ):
+        assert findings[check_id]["status"] == "not_verified"
+        assert findings[check_id]["severity"] == "info"
+        assert findings[check_id]["confidence"] == "low"
+
+    assert report["summary"][expected_https_status] == 1
+    assert report["summary"]["not_verified"] == 4
+    assert report["summary"]["passed"] == 0
+    assert report["summary"]["total"] == 5
