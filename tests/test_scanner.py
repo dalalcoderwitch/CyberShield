@@ -1641,3 +1641,32 @@ def test_reject_dns_family_and_ip_version_mismatch(
     )
 
     assert validate_url("https://example.com") is False
+
+@pytest.mark.parametrize(
+    "dns_error",
+    ["dns_timeout", "dns_error", "dns_capacity", "timeout"],
+)
+def test_public_resolver_preserves_dns_failure_reason(
+    monkeypatch,
+    dns_error,
+):
+    calls = []
+
+    def fake_dns(hostname, deadline=None):
+        calls.append((hostname, deadline))
+        return None, dns_error
+
+    monkeypatch.setattr(
+        scanner_module,
+        "_resolve_dns_with_status",
+        fake_dns,
+    )
+
+    target, error = scanner_module.resolve_target_with_status(
+        "https://example.com",
+        deadline=123.0,
+    )
+
+    assert target is None
+    assert error == dns_error
+    assert calls == [("example.com", 123.0)]
