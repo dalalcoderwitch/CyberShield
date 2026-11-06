@@ -1582,3 +1582,62 @@ def test_security_header_normalization_ignores_unneeded_headers():
     assert results["X-Content-Type-Options"]["status"] == "warning"
     assert results["X-Frame-Options"]["status"] == "warning"
     assert results["CSP"]["status"] == "warning"
+
+@pytest.mark.parametrize(
+    "target_url",
+    [
+        "https://example.com:invalid",
+        "https://example.com:443:444",
+        "https://example.com/\r\nX-Test: injected",
+        r"https://example.com\@127.0.0.1",
+        "https://example.com/" + ("a" * 2049),
+    ],
+)
+def test_malformed_urls_are_rejected_before_dns(
+    monkeypatch,
+    target_url,
+):
+    def unexpected_dns(*args, **kwargs):
+        pytest.fail("DNS must not run for a malformed URL")
+
+    monkeypatch.setattr(
+        scanner_module.socket,
+        "getaddrinfo",
+        unexpected_dns,
+    )
+
+    assert validate_url(target_url) is False
+
+@pytest.mark.parametrize(
+    ("family", "ip_address"),
+    [
+        (socket.AF_INET, "2001:4860:4860::8888"),
+        (socket.AF_INET6, "93.184.216.34"),
+    ],
+)
+def test_reject_dns_family_and_ip_version_mismatch(
+    monkeypatch,
+    family,
+    ip_address,
+):
+    sockaddr = (
+        (ip_address, 443)
+        if family == socket.AF_INET
+        else (ip_address, 443, 0, 0)
+    )
+
+    monkeypatch.setattr(
+        socket,
+        "getaddrinfo",
+        lambda *args, **kwargs: [
+            (
+                family,
+                socket.SOCK_STREAM,
+                socket.IPPROTO_TCP,
+                "",
+                sockaddr,
+            )
+        ],
+    )
+
+    assert validate_url("https://example.com") is False
