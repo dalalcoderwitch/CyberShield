@@ -1,8 +1,15 @@
 from datetime import datetime, timezone
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import urlsplit, urlunsplit, urljoin
 from uuid import uuid4
 
-from .scanner import _safe_get_response, check_security_headers
+from .scanner import _safe_get_response, _safe_http_redirect_probe, _safe_cors_preflight, _resolve_redirect_location_addresses, _collect_disclosure_evidence, check_security_headers
+
+from .checks.context import CheckContext
+from .checks.evidence import EvidenceCollection
+from .checks.response_runner import (
+    evaluate_week3_evidence,
+    evaluate_shared_week3_checks,
+)
 
 
 ENGINE_VERSION = "1.0.0"
@@ -186,38 +193,85 @@ def scan_target(
     target_url: str,
     resolved_target=None,
     deadline: float | None = None,
+    include_expanded_checks: bool = False,
 ) -> dict:
     """
     تنفيذ الفحوصات المحددة وإرجاع تقرير منظم.
 
     لا يعني اكتمال إنشاء التقرير أن جميع الفحوصات نجحت.
     """
+    if type(include_expanded_checks) is not bool:
+        raise TypeError("include_expanded_checks must be a bool")
+
     scanned_at = datetime.now(timezone.utc).isoformat()
     scan_id = str(uuid4())
 
     safe_target_url = _safe_report_target_url(target_url)
+    tls_metadata = {}
+    redirect_dns = {}
+    validated_target = {}
+    http_probe = {}
+    cookie_evidence = {}
+    access_evidence = {}
+    cors_evidence = {}
+    disclosure_capture = {}
+    disclosure_evidence = None
 
     # يجب أن يبقى فحص الهدف داخل الماسح فعالًا،
     # حتى لو استُدعيت هذه الدالة مباشرةً خارج Flask.
     if deadline is None:
         if resolved_target is None:
-            status_code, headers, error = _safe_get_response(target_url)
+            if include_expanded_checks:
+                status_code, headers, error = _safe_get_response(
+                    target_url,
+                    tls_metadata=tls_metadata,
+                    validated_target_capture=validated_target,
+                    cookie_evidence_capture=cookie_evidence,
+                    access_evidence_capture=access_evidence,
+                    disclosure_evidence_capture=disclosure_capture,
+                )
+            else:
+                status_code, headers, error = _safe_get_response(target_url)
         else:
+            if include_expanded_checks:
+                status_code, headers, error = _safe_get_response(
+                    target_url,
+                    resolved_target=resolved_target,
+                    tls_metadata=tls_metadata,
+                    validated_target_capture=validated_target,
+                    cookie_evidence_capture=cookie_evidence,
+                    access_evidence_capture=access_evidence,
+                    disclosure_evidence_capture=disclosure_capture,
+                )
+            else:
+                status_code, headers, error = _safe_get_response(target_url, resolved_target=resolved_target)
+    elif resolved_target is None:
+        if include_expanded_checks:
+            status_code, headers, error = _safe_get_response(
+                target_url,
+                deadline=deadline,
+                tls_metadata=tls_metadata,
+                validated_target_capture=validated_target,
+                cookie_evidence_capture=cookie_evidence,
+                access_evidence_capture=access_evidence,
+                disclosure_evidence_capture=disclosure_capture,
+            )
+        else:
+            status_code, headers, error = _safe_get_response(target_url, deadline=deadline)
+    else:
+        if include_expanded_checks:
             status_code, headers, error = _safe_get_response(
                 target_url,
                 resolved_target=resolved_target,
+                deadline=deadline,
+                tls_metadata=tls_metadata,
+                validated_target_capture=validated_target,
+                cookie_evidence_capture=cookie_evidence,
+                access_evidence_capture=access_evidence,
+                disclosure_evidence_capture=disclosure_capture,
             )
-    elif resolved_target is None:
-        status_code, headers, error = _safe_get_response(
-            target_url,
-            deadline=deadline,
-        )
-    else:
-        status_code, headers, error = _safe_get_response(
-            target_url,
-            resolved_target=resolved_target,
-            deadline=deadline,
-        )
+        else:
+            status_code, headers, error = _safe_get_response(target_url, resolved_target=resolved_target, deadline=deadline)
     findings = []
 
     # فحص HTTPS وTLS.
@@ -448,6 +502,84 @@ def scan_target(
                     ],
                 )
             )
+
+    if include_expanded_checks:
+        target = validated_target.get("target")
+        if target is not None:
+            if error is None:
+                cors_error = _safe_cors_preflight(target, deadline=deadline, capture=cors_evidence)
+                if cors_error is not None:
+                    cors_evidence["error"] = cors_error
+                try:
+                    disclosure_evidence = _collect_disclosure_evidence(
+                        target, status_code, disclosure_capture, deadline=deadline
+                    )
+                except Exception:
+                    disclosure_capture.clear()
+            http_probe_error = _safe_http_redirect_probe(target, deadline=deadline, capture=http_probe)
+            if http_probe_error is not None:
+                http_probe["error"] = http_probe_error
+        if http_probe.get("status") in (301, 302, 303, 307, 308) and http_probe.get("location"):
+            try:
+                destination = urljoin(http_probe["request_url"], http_probe["location"])
+            except (TypeError, ValueError):
+                destination = None
+            if destination is not None:
+                http_probe["destination"] = destination
+                answers = _resolve_redirect_location_addresses(destination, deadline=deadline)
+                if answers is not None:
+                    redirect_dns["addresses"] = answers
+        if error is None:
+            expanded_results = evaluate_shared_week3_checks(
+                CheckContext(
+                    safe_target_url=safe_target_url,
+                    deadline=deadline,
+                    http_status=status_code,
+                    response_headers=headers,
+                    tls_metadata=tls_metadata,
+                    tls_verified=(error is None),
+                    redirect_dns_answers=redirect_dns.get("addresses", ()),
+                    http_probe_status=http_probe.get("status"),
+                    http_probe_error=http_probe.get("error"),
+                    http_probe_location=http_probe.get("location"),
+                    http_probe_request_url=http_probe.get("request_url"),
+                    redirect_destination_url=http_probe.get("destination"),
+                    cookie_evidence_available=cookie_evidence.get("available"),
+                    cookie_observations=cookie_evidence.get("observations", ()),
+                    cors_probe_status=cors_evidence.get("status"),
+                    cors_probe_error=cors_evidence.get("error"),
+                    cors_probe_available=cors_evidence.get("available"),
+                    cors_headers=cors_evidence.get("headers", {}),
+                    redirect_location_values=access_evidence.get("location_values", ()),
+                    redirect_evidence_available=access_evidence.get("available"),
+                    redirect_request_url=target_url if access_evidence.get("available") else None,
+                    disclosure_evidence=disclosure_evidence,
+                )
+            )
+        else:
+            expanded_results = evaluate_week3_evidence(
+                EvidenceCollection(http_status=None, tls_verified=False,
+                    redirect_dns_answers=redirect_dns.get("addresses", ()),
+                    http_probe_status=http_probe.get("status"),
+                    http_probe_error=http_probe.get("error"),
+                    http_probe_location=http_probe.get("location"),
+                    http_probe_request_url=http_probe.get("request_url"),
+                    redirect_destination_url=http_probe.get("destination"),
+                    cookie_evidence_available=cookie_evidence.get("available"),
+                    cookie_observations=cookie_evidence.get("observations", ()),
+                    cors_probe_status=cors_evidence.get("status"),
+                    cors_probe_error=cors_evidence.get("error"),
+                    cors_probe_available=cors_evidence.get("available"),
+                    cors_headers=cors_evidence.get("headers", {}),
+                    redirect_location_values=access_evidence.get("location_values", ()),
+                    redirect_evidence_available=access_evidence.get("available"),
+                    redirect_request_url=target_url if access_evidence.get("available") else None,
+                    disclosure_evidence=disclosure_evidence)
+            )
+
+        findings.extend(
+            result.to_dict() for result in expanded_results
+        )
 
     return {
         "scan_id": scan_id,

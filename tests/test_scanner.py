@@ -403,6 +403,152 @@ def test_dns_capacity_exhaustion_never_triggers_http_request(monkeypatch):
     assert error == "dns_capacity"
 
 
+def test_dns_concurrency_is_limited_to_four(monkeypatch):
+    """يجب ألا يعمل أكثر من أربعة DNS lookups بالتزامن."""
+
+    from threading import Lock
+
+    expected_limit = 4
+    assert scanner_module._DNS_MAX_CONCURRENT_LOOKUPS == expected_limit
+
+    slots = BoundedSemaphore(expected_limit)
+
+    monkeypatch.setattr(
+        scanner_module,
+        "_DNS_LOOKUP_SLOTS",
+        slots,
+    )
+    monkeypatch.setattr(
+        scanner_module,
+        "_DNS_TIMEOUT_SECONDS",
+        5.0,
+    )
+
+    lock = Lock()
+    all_started = Event()
+    release_dns = Event()
+    fifth_finished = Event()
+
+    active = 0
+    total_started = 0
+    max_active = 0
+
+    record = (
+        socket.AF_INET,
+        socket.SOCK_STREAM,
+        socket.IPPROTO_TCP,
+        "",
+        ("93.184.216.34", 443),
+    )
+
+    outcomes = [None] * expected_limit
+    fifth_result = []
+
+    def slow_dns(*args, **kwargs):
+        nonlocal active, total_started, max_active
+
+        with lock:
+            active += 1
+            total_started += 1
+            max_active = max(max_active, active)
+
+            if total_started == expected_limit:
+                all_started.set()
+
+        try:
+            if not release_dns.wait(timeout=5):
+                raise RuntimeError("DNS test release timed out")
+
+            return [record]
+
+        finally:
+            with lock:
+                active -= 1
+
+    monkeypatch.setattr(
+        scanner_module.socket,
+        "getaddrinfo",
+        slow_dns,
+    )
+
+    def resolve(index):
+        outcomes[index] = scanner_module._resolve_dns_with_status(
+            f"worker-{index}.example"
+        )
+
+    workers = [
+        Thread(target=resolve, args=(index,))
+        for index in range(expected_limit)
+    ]
+
+    fifth_worker = None
+
+    try:
+        for worker in workers:
+            worker.start()
+
+        assert all_started.wait(timeout=2), (
+            "لم تبدأ عمليات DNS الأربع بالتزامن"
+        )
+
+        with lock:
+            assert active == expected_limit
+            assert max_active == expected_limit
+            assert total_started == expected_limit
+
+        def resolve_fifth():
+            fifth_result.append(
+                scanner_module._resolve_dns_with_status(
+                    "fifth.example"
+                )
+            )
+            fifth_finished.set()
+
+        fifth_worker = Thread(target=resolve_fifth)
+        fifth_worker.start()
+
+        assert fifth_finished.wait(timeout=2), (
+            "الطلب الخامس لم يُرفض بسرعة عند امتلاء سعة DNS"
+        )
+
+        assert fifth_result == [(None, "dns_capacity")]
+
+        with lock:
+            assert total_started == expected_limit
+            assert max_active == expected_limit
+
+    finally:
+        release_dns.set()
+
+        for worker in workers:
+            worker.join(timeout=3)
+
+        if fifth_worker is not None:
+            fifth_worker.join(timeout=3)
+
+    assert all(not worker.is_alive() for worker in workers)
+    assert fifth_worker is not None and not fifth_worker.is_alive()
+
+    assert outcomes == [([record], None)] * expected_limit
+
+    with lock:
+        assert active == 0
+
+    # التأكد من استعادة خانات DNS الأربع بعد انتهاء العمليات.
+    acquired = 0
+
+    try:
+        for _ in range(expected_limit):
+            assert slots.acquire(timeout=1), (
+                "لم تُستعد جميع خانات DNS بعد انتهاء العمليات"
+            )
+            acquired += 1
+
+    finally:
+        for _ in range(acquired):
+            slots.release()
+
+
 def test_reject_mixed_public_and_private_ipv6_results(monkeypatch):
     """وجود IPv6 خاص مع IPv4 عام يجب أن يرفض الهدف كله."""
     monkeypatch.setattr(
@@ -826,7 +972,44 @@ def test_response_and_session_close_when_header_access_raises(monkeypatch):
     assert session.closed is True
 
 
-def test_real_tls_rejects_untrusted_self_signed_certificate(tmp_path, monkeypatch):
+def test_session_closes_when_response_close_raises(monkeypatch):
+    mock_public_dns(monkeypatch)
+
+    class FakeResponse:
+        status_code = 200
+        headers = {}
+
+        def close(self):
+            raise RuntimeError("Simulated response close failure")
+
+    class FakeSession:
+        def __init__(self):
+            self.trust_env = True
+            self.closed = False
+
+        def mount(self, prefix, adapter):
+            pass
+
+        def get(self, url, **kwargs):
+            return FakeResponse()
+
+        def close(self):
+            self.closed = True
+
+    session = FakeSession()
+    monkeypatch.setattr(
+        scanner_module.requests,
+        "Session",
+        lambda: session,
+    )
+
+    with pytest.raises(RuntimeError, match="Simulated response close failure"):
+        _safe_get_response("https://example.com")
+
+    assert session.closed is True
+
+
+def test_real_tls_rejects_untrusted_self_signed_certificate(tmp_path, monkeypatch, caplog):
     """
     مصافحة TLS حقيقية مع خادم محلي:
     1. رفض الشهادة الذاتية التوقيع غير الموثوقة.
@@ -891,10 +1074,54 @@ Sydvx0FeNWmqPBhmlaj0SqH0
 
     requests_seen = {"count": 0}
     malformed_headers = {"enabled": False, "oversized": False}
+    redirect_mode = {"enabled": False}
+    response_policy_headers = {}
+    response_cookie_headers = []
+    options_seen = {"count": 0, "headers": []}
+    disclosure_mode = {"enabled": False}
+    error_mode = {"enabled": False}
+    disclosure_requests = []
 
     class TestHandler(BaseHTTPRequestHandler):
+        def do_OPTIONS(self):
+            options_seen["count"] += 1
+            options_seen["headers"].append(dict(self.headers))
+            self.send_response(204)
+            self.send_header("Access-Control-Allow-Origin", "https://cybershield.invalid")
+            self.send_header("Access-Control-Allow-Credentials", "true")
+            self.send_header("Access-Control-Allow-Methods", "GET")
+            self.send_header("Access-Control-Allow-Headers", "x-cybershield-audit")
+            self.send_header("Vary", "Origin")
+            self.end_headers()
+
         def do_GET(self):
             requests_seen["count"] += 1
+
+            if disclosure_mode["enabled"]:
+                path = self.path.split("?", 1)[0]
+                approved_disclosure_paths = {
+                    "/.env", "/.git/HEAD", "/.git/config", "/.DS_Store",
+                    "/backup.zip", "/database.sql", "/uploads/", "/files/",
+                    "/.well-known/security.txt", "/security.txt", "/robots.txt",
+                    "/app.js", "/app.js.map",
+                }
+                if path in approved_disclosure_paths:
+                    disclosure_requests.append((path, dict(self.headers)))
+                    response_map = {
+                        "/.env": (200, "text/plain", b"SECRET_KEY=FAKE_DISCLOSURE_SECRET_31\n"),
+                        "/uploads/": (200, "text/html", b"<html><title>Index of /uploads/</title></html>"),
+                        "/security.txt": (200, "text/plain", b"Contact: mailto:security@example.invalid\n"),
+                        "/robots.txt": (200, "text/plain", b"User-agent: *\nDisallow: /private\n"),
+                        "/app.js": (200, "application/javascript", b"console.log('ok');\n//# sourceMappingURL=app.js.map\n"),
+                        "/app.js.map": (200, "application/json", b'{"version":3,"sources":["hidden.ts"],"mappings":"AAAA"}'),
+                    }
+                    status, media_type, body = response_map.get(path, (404, "text/plain", b"not found"))
+                    self.send_response(status)
+                    self.send_header("Content-Type", media_type)
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
 
             if malformed_headers["oversized"]:
                 payload = (
@@ -917,9 +1144,37 @@ Sydvx0FeNWmqPBhmlaj0SqH0
                 self.connection.sendall(payload)
                 return
 
+            if error_mode["enabled"] and self.path == "/integrated-check":
+                body = b"Traceback (most recent call last):\n  File '/srv/app/private.py'\nSQLSTATE[hidden]"
+                self.send_response(500)
+                self.send_header("Content-Type", "text/html")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+
+            if redirect_mode["enabled"]:
+                self.send_response(302)
+                self.send_header("Location", "https://redirect.example/destination")
+                self.send_header("Content-Length", "1")
+                self.end_headers()
+                self.wfile.write(b"x")
+                return
+
             self.send_response(200)
+            if disclosure_mode["enabled"] and self.path == "/integrated-check":
+                body = b'<html><script src="/app.js"></script></html>'
+                self.send_header("Content-Type", "text/html")
+                self.send_header("Content-Length", str(len(body)))
+            for header_name, header_value in response_policy_headers.items():
+                self.send_header(header_name, header_value)
+            for header_name, header_value in response_cookie_headers:
+                self.send_header(header_name, header_value)
             self.end_headers()
-            self.wfile.write(b"ok")
+            if disclosure_mode["enabled"] and self.path == "/integrated-check":
+                self.wfile.write(body)
+            else:
+                self.wfile.write(b"ok")
 
         def log_message(self, *_args):
             pass
@@ -1060,6 +1315,12 @@ Sydvx0FeNWmqPBhmlaj0SqH0
             "resolve_target_with_status",
             fake_resolver,
         )
+        real_ip_policy = scanner_module._is_allowed_ip
+        monkeypatch.setattr(
+            scanner_module,
+            "_is_allowed_ip",
+            lambda address: address.is_loopback or real_ip_policy(address),
+        )
 
         real_create_connection = urllib3_connection.create_connection
         socket_observation = {}
@@ -1099,12 +1360,35 @@ Sydvx0FeNWmqPBhmlaj0SqH0
             trust_test_certificate,
         )
 
+        redirect_dns_records = [
+            (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("93.184.216.34", 443)),
+            (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("10.0.0.8", 443)),
+        ]
+        redirect_dns_calls = []
+
+        def fake_redirect_dns(hostname, deadline=None):
+            redirect_dns_calls.append((hostname, deadline))
+            return redirect_dns_records, None
+
+        monkeypatch.setattr(
+            scanner_module,
+            "_resolve_dns_with_status",
+            fake_redirect_dns,
+        )
+        redirect_mode["enabled"] = True
+        integrated_tls_metadata = {}
+        redirect_dns_evidence = {}
         integrated_status, integrated_headers, integrated_error = (
-            scanner_module._safe_get_response(integrated_url)
+            scanner_module._safe_get_response(
+                integrated_url,
+                tls_metadata=integrated_tls_metadata,
+                redirect_dns_answers=redirect_dns_evidence,
+            )
         )
 
         assert resolver_calls == [(integrated_url, None)]
-        assert integrated_status == 200
+        assert integrated_status == 302
+        assert integrated_headers["Location"] == "https://redirect.example/destination"
         assert integrated_error is None
         assert socket_observation["requested_address"] == (
             "127.0.0.1",
@@ -1115,7 +1399,29 @@ Sydvx0FeNWmqPBhmlaj0SqH0
             server.server_port,
         )
         assert received_sni == ["localhost"]
+        assert integrated_tls_metadata["version"].startswith("TLSv")
+        assert integrated_tls_metadata["cipher"]
+        assert integrated_tls_metadata["not_before"]
+        assert integrated_tls_metadata["not_after"]
+        assert integrated_tls_metadata["chain_available"] is True
+        from security_scanner.checks.evidence import EvidenceCollection
+        from security_scanner.checks.response_runner import evaluate_week3_evidence
+        live_results = {
+            result.check_id: result
+            for result in evaluate_week3_evidence(EvidenceCollection(
+                http_status=integrated_status,
+                tls_verified=True,
+                tls_metadata=integrated_tls_metadata,
+            ))
+        }
+        assert live_results["tls_certificate_chain"].status == "passed"
+        assert live_results["tls_certificate_expiry"].status == "passed"
+        assert live_results["tls_protocol_config"].status == "passed"
+        assert redirect_dns_calls == []
+        assert redirect_dns_evidence == {}
+        # HTTPS response Location does not trigger DNS or destination access.
         assert requests_seen["count"] == 2
+        redirect_mode["enabled"] = False
 
         # A real local HTTPS response exceeding Python's header limit.
         malformed_headers["enabled"] = True
@@ -1144,6 +1450,114 @@ Sydvx0FeNWmqPBhmlaj0SqH0
         assert requests_seen["count"] == 4
         assert received_sni == ["localhost", "localhost", "localhost"]
 
+        # End-to-end verified local HTTPS response -> expanded report.
+        malformed_headers["oversized"] = False
+        response_policy_headers.update({
+            "Referrer-Policy": "strict-origin-when-cross-origin",
+            "Permissions-Policy": "camera=()",
+        })
+        cookie_secrets = (
+            "LIVE_FAKE_COOKIE_SECRET_103",
+            "LIVE_FAKE_COOKIE_SECRET_204",
+        )
+        response_cookie_headers.extend((
+            ("Set-Cookie", f"first={cookie_secrets[0]}; Expires=Wed, 21 Oct 2030 07:28:00 GMT; Secure; HttpOnly; SameSite=None"),
+            ("Set-Cookie", f"second={cookie_secrets[1]}; Expires=Thu, 22 Oct 2031 08:29:00 GMT; Secure; HttpOnly; SameSite=Lax"),
+        ))
+        import security_scanner.report as report_module
+
+        monkeypatch.setattr(
+            report_module,
+            "_safe_http_redirect_probe",
+            lambda target, deadline=None, capture=None: "connection",
+        )
+        disclosure_mode["enabled"] = True
+        integrated_report = report_module.scan_target(
+            integrated_url,
+            include_expanded_checks=True,
+        )
+        report_findings = {
+            item["check_id"]: item
+            for item in integrated_report["findings"]
+        }
+        assert integrated_report["http_status"] == 200
+        assert report_findings["header_referrer_policy"]["status"] == "passed"
+        assert report_findings["header_permissions_policy"]["status"] == "warning"
+        assert report_findings["header_permissions_policy"]["severity"] == "info"
+        assert report_findings["cookie_secure"]["status"] == "passed"
+        assert report_findings["cookie_httponly"]["status"] == "passed"
+        assert report_findings["cookie_samesite"]["status"] == "passed"
+        assert report_findings["cors_misconfiguration"]["status"] == "warning"
+        assert report_findings["open_redirect"]["status"] == "skipped"
+        assert report_findings["sensitive_file_exposure"]["status"] == "warning"
+        assert report_findings["source_maps_exposure"]["status"] == "warning"
+        assert report_findings["directory_listing"]["status"] == "warning"
+        assert report_findings["server_information_disclosure"]["status"] == "warning"
+        assert report_findings["error_information_disclosure"]["status"] == "skipped"
+        assert report_findings["public_security_files"]["status"] == "passed"
+        assert len(report_findings) == len(integrated_report["findings"])
+        assert integrated_report["summary"]["total"] == len(integrated_report["findings"])
+        for finding_status in ("passed", "warning", "not_verified", "error", "skipped"):
+            assert integrated_report["summary"][finding_status] == sum(
+                finding["status"] == finding_status
+                for finding in integrated_report["findings"]
+            )
+        assert all(secret not in repr(integrated_report) for secret in cookie_secrets)
+        assert all(secret not in caplog.text for secret in cookie_secrets)
+        assert "FAKE_DISCLOSURE_SECRET_31" not in repr(integrated_report)
+        assert "hidden.ts" not in repr(integrated_report)
+        assert "BaseHTTP/0.6" not in repr(integrated_report)
+        assert "Python/3.14" not in repr(integrated_report)
+        assert len(disclosure_requests) == 13
+        assert {path for path, _headers in disclosure_requests} == {
+            "/.env", "/.git/HEAD", "/.git/config", "/.DS_Store", "/backup.zip",
+            "/database.sql", "/app.js", "/app.js.map", "/uploads/", "/files/",
+            "/.well-known/security.txt", "/security.txt", "/robots.txt",
+        }
+        assert all(headers["Accept-Encoding"] == "identity" for _path, headers in disclosure_requests)
+        assert all(headers["Range"] == "bytes=0-4095" for _path, headers in disclosure_requests)
+        assert all("Cookie" not in headers and "Authorization" not in headers for _path, headers in disclosure_requests)
+        assert requests_seen["count"] == 18
+        assert options_seen["count"] == 1
+        assert len(options_seen["headers"]) == 1
+        assert options_seen["headers"][0]["Origin"] == "https://cybershield.invalid"
+        assert options_seen["headers"][0]["Access-Control-Request-Method"] == "GET"
+        assert options_seen["headers"][0]["Access-Control-Request-Headers"] == "x-cybershield-audit"
+        assert "Cookie" not in options_seen["headers"][0]
+        assert "Authorization" not in options_seen["headers"][0]
+        assert received_sni == ["localhost"] * 18
+
+        # The original HTTPS response is evaluated without following its external Location.
+        redirect_mode["enabled"] = True
+        redirect_report = report_module.scan_target(
+            integrated_url,
+            include_expanded_checks=True,
+        )
+        redirect_findings = {item["check_id"]: item for item in redirect_report["findings"]}
+        assert redirect_findings["open_redirect"]["status"] == "warning"
+        assert len(redirect_report["findings"]) == 24
+        assert redirect_report["summary"]["total"] == 24
+        assert "redirect.example" not in repr(redirect_report["findings"])
+        assert options_seen["count"] == 2
+        assert len(disclosure_requests) == 24
+        assert requests_seen["count"] == 30
+        redirect_mode["enabled"] = False
+
+        error_mode["enabled"] = True
+        error_report = report_module.scan_target(
+            integrated_url,
+            include_expanded_checks=True,
+        )
+        error_findings = {item["check_id"]: item for item in error_report["findings"]}
+        assert error_report["http_status"] == 500
+        assert error_findings["error_information_disclosure"]["status"] == "warning"
+        assert "private.py" not in repr(error_report["findings"])
+        assert "SQLSTATE" not in repr(error_report["findings"])
+        assert len(error_report["findings"]) == error_report["summary"]["total"] == 24
+        assert len(disclosure_requests) == 35
+        assert requests_seen["count"] == 42
+        error_mode["enabled"] = False
+
     finally:
         session.close()
         hostname_session.close()
@@ -1151,6 +1565,135 @@ Sydvx0FeNWmqPBhmlaj0SqH0
         server.shutdown()
         server.server_close()
         server_thread.join(timeout=2)
+
+def test_real_tls_rejects_expired_certificate(tmp_path, monkeypatch):
+    certificate_pem = """-----BEGIN CERTIFICATE-----
+MIICwzCCAaugAwIBAgIJAOiIHCj7Xto5MA0GCSqGSIb3DQEBCwUAMBQxEjAQBgNV
+BAMTCWxvY2FsaG9zdDAeFw0wNjExMDcxMjQ1MzdaFw0wNzExMDcxMjQ1MzdaMBQx
+EjAQBgNVBAMTCWxvY2FsaG9zdDCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoC
+ggEBANil2JCjHU5qGeGSBfn3pF9klFMcmASt3xaoq2qOW5l13VUhchWFHxeqn0mW
+ewyfpMAiHAIU3kpaoxyjvoL9gGHx9SMAc+qQQuOGA8vgJF6bcodynfaAXDlxFXsr
+poi9wff7QXntVva/wM/3U+wwxlOTgR0dkAS5+UT5fQon6WxO51IkelnqN3rqE/nT
+sXsUE4do8XePDQtdplp310cGTUHorkv7dWyltNS6pbw0v0OjSEPHO5DKumbFFtNA
+ymkq2K4h9Tq83JtEdLznLfVGYFpFvUY6QFxF5OCc3UOWG7a3ZxgPRXOfXl58xo3s
+a3ZOzi3a7xZbohYxpc+xcMCRKg0CAwEAAaMYMBYwFAYDVR0RBA0wC4IJbG9jYWxo
+b3N0MA0GCSqGSIb3DQEBCwUAA4IBAQDMfMppZjuhcqkVUWDgRKFDFM3JPBDpON7P
+lm5bb3SGuFGFWQtcyCSKoqlDSl+KXHZ/InUVTavP+qf84kejaHVSTx+n5p8zT3H+
+Cab3YUg6sqGKFMcD+Nxe9bV1sQBZJ0jQp8+uZ68dVyJkZWEOb7aTfO0KzITJ1zVk
+tvG6qoHlzvlioarg9ii9T5soBOcYfggqEZYmSJ9SIa3tYwm7r2+/iXcV2hCmCoEK
+TE9kt3x2O+vsnka0CZPFNTQ321Wp6GgyGFHGVuYV3uxTu217uWg8vKM2k5/IIc9S
+8xQRphag6JJGF3Szm2mlxs/3u8AkezenZcM7HNkkF4VHk0Qlyibr
+-----END CERTIFICATE-----
+"""
+    private_key_pem = """-----BEGIN RSA PRIVATE KEY-----
+MIIEogIBAAKCAQEA2KXYkKMdTmoZ4ZIF+fekX2SUUxyYBK3fFqirao5bmXXdVSFy
+FYUfF6qfSZZ7DJ+kwCIcAhTeSlqjHKO+gv2AYfH1IwBz6pBC44YDy+AkXptyh3Kd
+9oBcOXEVeyumiL3B9/tBee1W9r/Az/dT7DDGU5OBHR2QBLn5RPl9CifpbE7nUiR6
+Weo3euoT+dOxexQTh2jxd48NC12mWnfXRwZNQeiuS/t1bKW01LqlvDS/Q6NIQ8c7
+kMq6ZsUW00DKaSrYriH1Orzcm0R0vOct9UZgWkW9RjpAXEXk4JzdQ5YbtrdnGA9F
+c59eXnzGjexrdk7OLdrvFluiFjGlz7FwwJEqDQIDAQABAoIBAFslSvtu5IF8+e6A
+tKr5mNnZQt3EheBSFi0+QP/PbJIfmEKck5aiLvaR/fnDqXkiIPoEX6wwg2TcxQrj
+iN8rL7wFQ5C6PApPLxTx6N75KdPzqjd57SMr1aEFBniPYLzeuKBPwLg/NfsRqVjV
+QSV5T7cRs5xAN7sFUu3F2OlQ6U97DHtwZuBWNa8Wvxe8jIxt5RgVGWL5YaLBpRDV
+FGciVS3BtXpMGGrNLR1CQQHYBNpHKXbB2vJzxgUawaC0ft0AKasPi6mcW/7cvZUC
+GIKVRDwgslZbO2OoWrdMjlELfG3eZlZdoCS6ANlRjQrSPHCUu8u+VojxWg7ilxxf
+0spFPDECgYEA5r1yY+1aXsuh7fy/ArKk516tL5O56/1xA18+rCWV3tyxngTHcEXV
+sGNl+vUveF8A3egBfXayWj8WczwJNSl081MxCyI9jI3zQStqaCAv0GIyuxomnv76
+9yXh9lqVs47DcOCobWdlCaZxJ7sz9nBtMTZzHYrvHMlci4npqe6S2QcCgYEA8F12
+KSKlG77zVuo3qkev91Qz9o11V3ZBPcEUpjUr+x1ceESDu41WwkZ6YSEvVJz+MErO
+YVNWp04wMSuH9MG+YEF9T+uiD1zmRhWho0lkMbJuA3sYG6MBVX/VjYnfHdP+Bkph
+UvTY8AEAYelYT4+CDPk+IJVXUtNrKc5s1Kdbg0sCgYAv+U+hSyYw83G1g4lLTE1Q
+9bRYYgST9lva8aCcNixU69naGvBEfaCSTfhUF0pJYqdRe/1jUpx+ewN17hOUBAyW
+0sMtp27YnGLpN9el0pteXixiDmvdPvJ7FFtI10iszpAAFhWuuYKeYQbB1gBVysZJ
+JyMED3DrsUoWkRQOCtZpXQKBgCNO51uVjkFsJFzBHRozW6LuSI/QKcuGQIEsyra7
+mtFRd9Lm5Z74XSU+qx13fXdldGVtp7FeR51d+/BNH7SRfUCwfhLuXyj4kY78AHl2
+/3PZbRWv0FPG9xwzIhCfjxnXmTodVPyVoQRocUDwwRs2znjPaBPrPB+blONYQl5e
+ky/PAoGAVpZ53gVeROtcmxcRN77A9SAnMPBy06c9ZuTXtqvMwYRcR0537jJ0C4rk
+jie7dpLtO+arMWbBa8uTzRTj6WFkpvv7CCmi0sATOqVLBllfVMQjR337FGrf8LCh
+K6GLNhcbjHUoWFSCqcdxTRb9dk6WPSFJk84TdbtE2/KKY8Qpi5k=
+-----END RSA PRIVATE KEY-----
+"""
+    certificate_path = tmp_path / "expired-localhost-cert.pem"
+    private_key_path = tmp_path / "expired-localhost-key.pem"
+    certificate_path.write_text(certificate_pem, encoding="ascii")
+    private_key_path.write_text(private_key_pem, encoding="ascii")
+
+    class Handler(BaseHTTPRequestHandler):
+        requests_seen = 0
+
+        def do_GET(self):
+            type(self).requests_seen += 1
+            self.send_response(200)
+            self.end_headers()
+
+        def log_message(self, format, *args):
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(
+        certfile=str(certificate_path),
+        keyfile=str(private_key_path),
+    )
+    server.socket = context.wrap_socket(server.socket, server_side=True)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    url = "https://localhost/expired-certificate"
+    target = (scanner_module.urlparse(url), "localhost", ["127.0.0.1"])
+    monkeypatch.setattr(
+        scanner_module,
+        "resolve_target_with_status",
+        lambda requested_url, deadline=None: (target, None),
+    )
+
+    from urllib3.util import connection as urllib3_connection
+    from requests.adapters import HTTPAdapter
+
+    real_create_connection = urllib3_connection.create_connection
+
+    def route_to_local_tls_server(address, *args, **kwargs):
+        assert address == ("127.0.0.1", 443)
+        return real_create_connection(
+            ("127.0.0.1", server.server_port),
+            *args,
+            **kwargs,
+        )
+
+    monkeypatch.setattr(
+        urllib3_connection,
+        "create_connection",
+        route_to_local_tls_server,
+    )
+
+    real_cert_verify = HTTPAdapter.cert_verify
+
+    def trust_expired_test_certificate(adapter, connection, request_url, verify, cert):
+        return real_cert_verify(
+            adapter,
+            connection,
+            request_url,
+            str(certificate_path),
+            cert,
+        )
+
+    monkeypatch.setattr(
+        HTTPAdapter,
+        "cert_verify",
+        trust_expired_test_certificate,
+    )
+
+    try:
+        status, headers, error = scanner_module._safe_get_response(url)
+        assert status is None
+        assert headers == {}
+        assert error == "tls"
+        assert Handler.requests_seen == 0
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
 
 def test_safe_get_response_applies_remaining_deadline(monkeypatch):
     import time
@@ -1586,6 +2129,7 @@ def test_security_header_normalization_ignores_unneeded_headers():
 @pytest.mark.parametrize(
     "target_url",
     [
+        "https://example.com:",
         "https://example.com:invalid",
         "https://example.com:443:444",
         "https://example.com/\r\nX-Test: injected",

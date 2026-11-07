@@ -2,12 +2,13 @@ import ipaddress
 import socket
 from queue import Empty, Queue
 from threading import BoundedSemaphore, Thread
-from urllib.parse import urlparse, urlunsplit
+from urllib.parse import urlparse, urlunsplit, urljoin, urlsplit
 import time
 from urllib3.util import Timeout
 import requests
 from requests.adapters import HTTPAdapter
-from urllib3 import PoolManager
+from urllib3 import HTTPSConnectionPool, PoolManager
+from urllib3.connection import HTTPSConnection
 
 
 # DNS limits: per-attempt timeout and at most four concurrent attempts.
@@ -125,11 +126,76 @@ def _is_allowed_ip(
 
     return True
 
+def _capture_tls_socket_metadata(tls_socket, destination):
+    """Copy non-sensitive metadata from an already verified TLS socket."""
+    try:
+        destination["version"] = tls_socket.version()
+    except Exception:
+        pass
+    try:
+        cipher = tls_socket.cipher()
+        if cipher:
+            destination["cipher"] = cipher[0]
+    except Exception:
+        pass
+    try:
+        certificate = tls_socket.getpeercert()
+    except Exception:
+        certificate = {}
+    if certificate:
+        destination["not_before"] = certificate.get("notBefore")
+        destination["not_after"] = certificate.get("notAfter")
+    try:
+        get_verified_chain = getattr(tls_socket, "get_verified_chain", None)
+        destination["chain_available"] = (
+            bool(get_verified_chain()) if callable(get_verified_chain) else None
+        )
+    except Exception:
+        destination["chain_available"] = None
+
+
+class _MetadataHTTPSConnection(HTTPSConnection):
+    def connect(self):
+        super().connect()
+        destination = getattr(self, "_tls_metadata_destination", None)
+        if destination is not None and self.sock is not None:
+            _capture_tls_socket_metadata(self.sock, destination)
+
+
+class _MetadataHTTPSConnectionPool(HTTPSConnectionPool):
+    ConnectionCls = _MetadataHTTPSConnection
+
+    def __init__(self, *args, tls_metadata_destination=None, **kwargs):
+        self._tls_metadata_destination = tls_metadata_destination
+        super().__init__(*args, **kwargs)
+
+    def _new_conn(self):
+        connection = super()._new_conn()
+        connection._tls_metadata_destination = self._tls_metadata_destination
+        return connection
+
+
+class _TLSMetadataPoolManager(PoolManager):
+    def __init__(self, *args, tls_metadata_destination=None, **kwargs):
+        self._tls_metadata_destination = tls_metadata_destination
+        super().__init__(*args, **kwargs)
+        self.pool_classes_by_scheme = self.pool_classes_by_scheme.copy()
+        self.pool_classes_by_scheme["https"] = _MetadataHTTPSConnectionPool
+
+    def _new_pool(self, scheme, host, port, request_context=None):
+        if scheme == "https":
+            context = dict(request_context or self.connection_pool_kw)
+            context["tls_metadata_destination"] = self._tls_metadata_destination
+            request_context = context
+        return super()._new_pool(scheme, host, port, request_context)
+
+
 class PinnedIPAdapter(HTTPAdapter):
     """Connect to a specific IP address while verifying the hostname through TLS."""
 
-    def __init__(self, hostname: str):
+    def __init__(self, hostname: str, tls_metadata: dict | None = None):
         self.hostname = hostname
+        self.tls_metadata = tls_metadata
         super().__init__(max_retries=0)
 
     def init_poolmanager(
@@ -146,10 +212,11 @@ class PinnedIPAdapter(HTTPAdapter):
         pool_kwargs["server_hostname"] = self.hostname
         pool_kwargs["assert_hostname"] = self.hostname
 
-        self.poolmanager = PoolManager(
+        self.poolmanager = _TLSMetadataPoolManager(
             num_pools=connections,
             maxsize=maxsize,
             block=block,
+            tls_metadata_destination=self.tls_metadata,
             **pool_kwargs,
         )
 
@@ -177,6 +244,7 @@ def _resolve_target_with_status(url: str, deadline=None):
         or parsed.password is not None
         or port not in (None, 443)
         or "\\" in parsed.netloc
+        or parsed.netloc.endswith(":")
     ):
         return None, "invalid"
 
@@ -273,6 +341,442 @@ def resolve_target(url: str, deadline=None):
     return target
 
 
+def _resolve_redirect_location_addresses(location: str, deadline=None):
+    """Collect bounded DNS answers for an absolute policy-shaped redirect.
+
+    This helper never opens a connection to the destination. It intentionally
+    returns every address, including prohibited ones, so the evaluator can
+    reject mixed public/private answers rather than silently filtering them.
+    """
+    if (
+        not isinstance(location, str)
+        or not location
+        or len(location) > 2048
+        or any(ord(char) < 32 or ord(char) == 127 for char in location)
+    ):
+        return None
+    try:
+        parsed = urlparse(location)
+        port = parsed.port
+    except ValueError:
+        return None
+    if (
+        parsed.scheme.lower() != "https"
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or port not in (None, 443)
+        or "\\" in parsed.netloc
+        or parsed.netloc.endswith(":")
+    ):
+        return None
+    try:
+        hostname = parsed.hostname.encode("idna").decode("ascii").lower().rstrip(".")
+    except UnicodeError:
+        return None
+    if not hostname:
+        return None
+    blocked_suffixes = (".localhost", ".local", ".internal", ".home.arpa")
+    if hostname == "localhost" or hostname.endswith(blocked_suffixes):
+        return None
+    try:
+        literal_ip = ipaddress.ip_address(hostname)
+    except ValueError:
+        literal_ip = None
+    if literal_ip is not None:
+        return (literal_ip.compressed,)
+
+    if deadline is None:
+        addresses, error = _resolve_dns_with_status(hostname)
+    else:
+        addresses, error = _resolve_dns_with_status(hostname, deadline=deadline)
+    if error is not None or not addresses or len(addresses) > 32:
+        return None
+    results = []
+    for address in addresses:
+        try:
+            family = address[0]
+            raw_ip = address[4][0].split("%", 1)[0]
+            parsed_ip = ipaddress.ip_address(raw_ip)
+        except (ValueError, IndexError, TypeError, AttributeError):
+            return None
+        expected_family = socket.AF_INET if parsed_ip.version == 4 else socket.AF_INET6
+        if family != expected_family:
+            return None
+        if parsed_ip.compressed not in results:
+            results.append(parsed_ip.compressed)
+    return tuple(results) if results else None
+
+
+def _parse_set_cookie_attributes(raw_value):
+    """Return attribute flags only; never return cookie names or values."""
+    attribute_start = raw_value.find(";")
+    if attribute_start < 0:
+        return False, False, "missing"
+
+    secure = False
+    httponly = False
+    samesite_values = []
+    for attribute in raw_value[attribute_start + 1 :].split(";"):
+        name, separator, value = attribute.strip().partition("=")
+        normalized_name = name.strip().lower()
+        if normalized_name == "secure":
+            secure = True
+        elif normalized_name == "httponly":
+            httponly = True
+        elif normalized_name == "samesite":
+            normalized_value = value.strip().lower() if separator else ""
+            if normalized_value in ("strict", "lax", "none"):
+                samesite_values.append(normalized_value)
+            else:
+                samesite_values.append("invalid")
+
+    if not samesite_values:
+        samesite = "missing"
+    elif len(samesite_values) == 1:
+        samesite = samesite_values[0]
+    elif "invalid" in samesite_values or len(set(samesite_values)) != 1:
+        samesite = "ambiguous"
+    else:
+        samesite = samesite_values[0]
+    return secure, httponly, samesite
+
+
+def _collect_set_cookie_observations(response):
+    """Read separate raw Set-Cookie fields and retain parsed flags only.
+
+    Set-Cookie is never split on commas: Expires values commonly contain one.
+    If raw multi-value access or existing header limits cannot be confirmed,
+    cookie evidence is unavailable instead of inferred from merged headers.
+    """
+    from .checks.limits import (
+        MAX_RESPONSE_HEADER_BYTES,
+        MAX_RESPONSE_HEADER_COUNT,
+        response_header_size_bytes,
+    )
+
+    try:
+        raw_headers = response.raw.headers
+        getlist = getattr(raw_headers, "getlist", None)
+        keys = getattr(raw_headers, "keys", None)
+        if not callable(getlist) or not callable(keys):
+            return False, ()
+
+        header_count = 0
+        header_bytes = 0
+        observations = []
+        for header_name in keys():
+            values = getlist(header_name)
+            if not isinstance(values, (tuple, list)):
+                return False, ()
+            for raw_value in values:
+                if not isinstance(header_name, str) or not isinstance(raw_value, str):
+                    return False, ()
+                header_count += 1
+                if header_count > MAX_RESPONSE_HEADER_COUNT:
+                    return False, ()
+                header_bytes += response_header_size_bytes(header_name, raw_value)
+                if header_bytes > MAX_RESPONSE_HEADER_BYTES:
+                    return False, ()
+                if header_name.lower() == "set-cookie":
+                    observations.append(_parse_set_cookie_attributes(raw_value))
+                    if len(observations) > MAX_RESPONSE_HEADER_COUNT:
+                        return False, ()
+                raw_value = None
+            values = ()
+        return True, tuple(observations)
+    except Exception:
+        # Do not log or include exception text: it may contain raw header data.
+        return False, ()
+
+
+def _collect_selected_response_headers(response, selected_names):
+    """Read bounded raw multi-value response headers without merged fallback."""
+    try:
+        from .checks.limits import (
+            MAX_RESPONSE_HEADER_BYTES,
+            MAX_RESPONSE_HEADER_COUNT,
+            response_header_size_bytes,
+        )
+        raw_headers = response.raw.headers
+        if not callable(getattr(raw_headers, "getlist", None)):
+            return False, {}
+        count = 0
+        size = 0
+        for name in raw_headers.keys():
+            for value in raw_headers.getlist(name):
+                count += 1
+                if count > MAX_RESPONSE_HEADER_COUNT:
+                    return False, {}
+                size += response_header_size_bytes(str(name), str(value))
+                if size > MAX_RESPONSE_HEADER_BYTES:
+                    return False, {}
+        captured = {}
+        for name in selected_names:
+            values = tuple(raw_headers.getlist(name))
+            if values:
+                captured[name.lower()] = values
+        return True, captured
+    except Exception:
+        # Header values can contain sensitive query or policy data; never log parser errors.
+        return False, {}
+
+
+
+def _read_bounded_identity_sample(response, limit):
+    """Read at most `limit` raw bytes, without decompression."""
+    try:
+        if response.headers.get("Content-Encoding", "identity").strip().lower() not in ("", "identity"):
+            return b"", False
+        stream = getattr(response.raw, "stream", None)
+        if not callable(stream):
+            return b"", False
+        sample = bytearray()
+        exhausted = False
+        while len(sample) < limit:
+            amount = min(4096, limit - len(sample))
+            got_chunk = False
+            for chunk in stream(amt=amount, decode_content=False):
+                got_chunk = True
+                if not isinstance(chunk, (bytes, bytearray)):
+                    return bytes(sample), False
+                sample.extend(chunk[:limit - len(sample)])
+                if len(sample) >= limit:
+                    break
+            if not got_chunk:
+                exhausted = True
+                break
+        try:
+            length = int(response.headers.get("Content-Length"))
+        except (TypeError, ValueError):
+            length = None
+        complete = exhausted or (length is not None and length <= limit and len(sample) == length)
+        return bytes(sample), complete
+    except Exception:
+        return b"", False
+
+
+def _safe_disclosure_get(target, path, deadline=None, limit=4096):
+    """Request one statically allowlisted same-origin path with strict caps."""
+    result = {"status": None, "media_type": "unknown", "sample": b"", "complete": False,
+              "error": None, "attempted": False}
+    if (limit not in (4096, 16384) or not isinstance(path, str) or not path.startswith("/")
+            or path.startswith("//") or "\\" in path or len(path) > 2048
+            or any(ord(char) < 32 or ord(char) == 127 for char in path)):
+        result["error"] = "invalid"
+        return result
+    parsed, hostname, public_ips = target
+    try:
+        if not public_ips or any(not _is_allowed_ip(ipaddress.ip_address(value)) for value in public_ips):
+            result["error"] = "invalid"
+            return result
+    except (ValueError, TypeError):
+        result["error"] = "invalid"
+        return result
+    remaining = None if deadline is None else deadline - time.monotonic()
+    if remaining is not None and remaining <= 0:
+        result["error"] = "timeout"
+        return result
+    ip = public_ips[0]
+    ip_for_url = f"[{ip}]" if ":" in ip else ip
+    request_url = urlunsplit(("https", f"{ip_for_url}:443", path, "", ""))
+    timeout = Timeout(connect=2.0, read=2.0) if remaining is None else Timeout(
+        total=remaining, connect=min(2.0, remaining), read=min(2.0, remaining)
+    )
+    session = None
+    response = None
+    try:
+        session = requests.Session()
+        session.trust_env = False
+        session.mount("https://", PinnedIPAdapter(hostname))
+        result["attempted"] = True
+        response = session.get(
+            request_url,
+            headers={
+                "Host": f"[{hostname}]" if ":" in hostname else hostname,
+                "User-Agent": "CyberShield/1.0", "Connection": "close",
+                "Accept-Encoding": "identity", "Range": f"bytes=0-{limit - 1}",
+            },
+            timeout=timeout, allow_redirects=False, stream=True, verify=True,
+        )
+        result["status"] = response.status_code
+        raw_headers_available, response_fields = _collect_selected_response_headers(
+            response, ("Content-Type", "Content-Encoding", "Content-Length")
+        )
+        if not raw_headers_available:
+            result["error"] = "evidence"
+            return result
+        content_types = response_fields.get("content-type", ())
+        media = content_types[0].split(";", 1)[0].strip().lower() if len(content_types) == 1 else ""
+        allowed_media = {"text/plain", "text/html", "text/css", "application/json", "application/javascript", "text/javascript", "application/octet-stream"}
+        result["media_type"] = media if media in allowed_media else ("unknown" if not media else "other")
+        if response.status_code not in (200, 206):
+            return result
+        result["sample"], result["complete"] = _read_bounded_identity_sample(response, limit)
+        if response.status_code == 206:
+            result["complete"] = False
+        return result
+    except requests.exceptions.Timeout:
+        result["error"] = "timeout"
+        return result
+    except requests.exceptions.SSLError:
+        result["error"] = "tls"
+        return result
+    except requests.exceptions.RequestException:
+        result["error"] = "connection"
+        return result
+    except Exception:
+        result["error"] = "internal"
+        return result
+    finally:
+        if response is not None:
+            try:
+                response.close()
+            except Exception:
+                pass
+        if session is not None:
+            try:
+                session.close()
+            except Exception:
+                pass
+
+
+def _collect_disclosure_evidence(target, original_status, original_capture, deadline=None):
+    """Run the fixed 13-request Disclosure plan and retain sanitized categories."""
+    from .checks.disclosure_evidence import (
+        DIRECTORY_PATHS, PUBLIC_SECURITY_PATHS, SENSITIVE_PATHS, DisclosureEvidence,
+        classify_error_sample, classify_sensitive_sample, has_directory_index_marker,
+        is_same_https_origin, is_source_map_json, local_asset_references,
+        source_map_reference,
+    )
+    if target is None:
+        return DisclosureEvidence()
+    request_count = 0
+    sensitive_results = []
+    directory_results = []
+    public_results = []
+    original_sample = original_capture.pop("sample", b"") if original_capture else b""
+    original_complete = original_capture.pop("sample_complete", False) if original_capture else False
+    original_media = original_capture.pop("media_type", "unknown") if original_capture else "unknown"
+    header_available = original_capture.pop("header_available", None) if original_capture else None
+    server_names = original_capture.pop("server_header_names", ()) if original_capture else ()
+    server_types = original_capture.pop("server_info_types", ()) if original_capture else ()
+    is_error = original_status is not None and 400 <= original_status <= 599
+    error_patterns = classify_error_sample(original_sample) if is_error else ()
+    error_complete = original_complete if is_error else None
+    source_state = "unknown"
+    origin_host = f"[{target[1]}]" if ":" in target[1] else target[1]
+    base_url = urlunsplit(("https", origin_host, target[0].path or "/", target[0].query, ""))
+
+    def probe(path, limit=4096):
+        nonlocal request_count
+        if request_count >= 13:
+            return {"status": None, "media_type": "unknown", "sample": b"", "complete": False, "error": "budget", "attempted": False}
+        try:
+            result = _safe_disclosure_get(target, path, deadline=deadline, limit=limit)
+        except Exception:
+            # Isolate one path failure; do not expose exception text or stop other checks.
+            result = {"status": None, "media_type": "unknown", "sample": b"", "complete": False,
+                      "error": "internal", "attempted": False}
+        request_count += int(result.get("attempted", False))
+        return result
+
+    for path in SENSITIVE_PATHS:
+        item = probe(path)
+        status = item["status"]
+        if status in (404, 410):
+            sensitive_results.append((status, "not_found", None))
+        elif status in (200, 206):
+            marker = classify_sensitive_sample(path, item["sample"])
+            sensitive_results.append((status, "found" if marker else "unknown", marker))
+        else:
+            sensitive_results.append((status, "unknown", None))
+
+    if original_status is not None and 200 <= original_status < 300 and original_media == "text/html":
+        raw_refs = local_asset_references(original_sample)
+        html_map_ref = source_map_reference(original_sample)
+        local_refs = []
+        disallowed_ref = False
+        for ref in raw_refs:
+            if not is_same_https_origin(base_url, ref):
+                disallowed_ref = True
+                continue
+            absolute = urljoin(base_url, ref)
+            if urlsplit(absolute).path.lower().endswith((".js", ".css")):
+                local_refs.append(absolute)
+        if html_map_ref is not None:
+            if not is_same_https_origin(base_url, html_map_ref):
+                source_state = "reference_only"
+            elif request_count >= 13:
+                source_state = "reference_only"
+            else:
+                html_map_url = urljoin(base_url, html_map_ref)
+                html_map_parts = urlsplit(html_map_url)
+                html_map_item = probe(html_map_parts.path)
+                source_state = "confirmed" if (
+                    html_map_item["status"] in (200, 206)
+                    and is_source_map_json(html_map_item["sample"])
+                ) else "reference_only"
+        elif not raw_refs:
+            source_state = "clear" if original_complete else "unknown"
+        elif not local_refs:
+            source_state = "unknown"
+        elif request_count >= 13:
+            source_state = "unknown"
+        else:
+            asset_url = local_refs[0]
+            asset_parts = urlsplit(asset_url)
+            asset_path = asset_parts.path
+            asset = probe(asset_path)
+            if asset["status"] in (200, 206) and asset["media_type"] in ("application/javascript", "text/javascript", "text/css"):
+                map_ref = source_map_reference(asset["sample"])
+                if map_ref is None:
+                    source_state = "clear" if asset["complete"] and len(local_refs) == 1 and not disallowed_ref else "unknown"
+                elif not is_same_https_origin(asset_url, map_ref):
+                    source_state = "reference_only"
+                elif request_count >= 13:
+                    source_state = "reference_only"
+                else:
+                    map_url = urljoin(asset_url, map_ref)
+                    map_parts = urlsplit(map_url)
+                    map_path = map_parts.path
+                    map_item = probe(map_path)
+                    source_state = "confirmed" if map_item["status"] in (200, 206) and is_source_map_json(map_item["sample"]) else "reference_only"
+            else:
+                source_state = "unknown"
+
+    for path in DIRECTORY_PATHS:
+        item = probe(path)
+        status = item["status"]
+        if status in (404, 410):
+            state = "not_found"
+        elif status in (200, 206):
+            state = "listing" if has_directory_index_marker(item["sample"]) else ("not_listing" if item["complete"] else "unknown")
+        else:
+            state = "unknown"
+        directory_results.append((status, state))
+
+    for index, path in enumerate(PUBLIC_SECURITY_PATHS):
+        item = probe(path)
+        status = item["status"]
+        kind = "robots" if index == 2 else "security"
+        state = "not_found" if status in (404, 410) else (
+            "present" if status in (200, 206) and item["media_type"] == "text/plain" else "unknown"
+        )
+        public_results.append((status, kind, state, item["media_type"]))
+
+    original_sample = b""
+    if original_capture is not None:
+        original_capture.clear()
+    return DisclosureEvidence(
+        sensitive_results=tuple(sensitive_results), source_map_state=source_state,
+        directory_results=tuple(directory_results), server_headers_available=header_available,
+        server_header_names=tuple(server_names), server_info_types=tuple(server_types),
+        error_status=original_status if is_error else None, error_sample_complete=error_complete,
+        error_patterns=tuple(error_patterns), public_file_results=tuple(public_results),
+        request_count=request_count,
+    )
+
 
 def validate_url(url: str) -> bool:
     """Validate the URL without sending an HTTP request."""
@@ -283,6 +787,12 @@ def _safe_get_response(
     url: str,
     resolved_target=None,
     deadline: float | None = None,
+    tls_metadata: dict | None = None,
+    redirect_dns_answers: dict | None = None,
+    validated_target_capture: dict | None = None,
+    cookie_evidence_capture: dict | None = None,
+    access_evidence_capture: dict | None = None,
+    disclosure_evidence_capture: dict | None = None,
 ):
     """
     Send a single HTTPS request to an IP address that passed the target policy.
@@ -307,7 +817,9 @@ def _safe_get_response(
         return None, {}, "invalid"
 
     parsed, hostname, public_ips = target
-    request_timeout = (3, 5)
+    if validated_target_capture is not None:
+        validated_target_capture["target"] = target
+    request_timeout = (2, 2) if disclosure_evidence_capture is not None else (3, 5)
 
     if deadline is not None:
         remaining = deadline - time.monotonic()
@@ -317,8 +829,8 @@ def _safe_get_response(
 
         request_timeout = Timeout(
             total=remaining,
-            connect=min(3.0, remaining),
-            read=min(5.0, remaining),
+            connect=min(2.0 if disclosure_evidence_capture is not None else 3.0, remaining),
+            read=min(2.0 if disclosure_evidence_capture is not None else 5.0, remaining),
         )
     ip = public_ips[0]
     ip_for_url = f"[{ip}]" if ":" in ip else ip
@@ -337,7 +849,7 @@ def _safe_get_response(
 
     session = requests.Session()
     session.trust_env = False
-    session.mount("https://", PinnedIPAdapter(hostname))
+    session.mount("https://", PinnedIPAdapter(hostname, tls_metadata=tls_metadata))
 
     response = None
 
@@ -348,6 +860,7 @@ def _safe_get_response(
                 "Host": host_header,
                 "User-Agent": "CyberShield/1.0",
                 "Connection": "close",
+                "Accept-Encoding": "identity",
             },
             timeout=request_timeout,
             allow_redirects=False,
@@ -355,11 +868,58 @@ def _safe_get_response(
             verify=True,
         )
 
-        return (
-            response.status_code,
-            response.headers.copy(),
-            None,
-        )
+        if cookie_evidence_capture is not None:
+            available, observations = _collect_set_cookie_observations(response)
+            cookie_evidence_capture.update(
+                available=available,
+                observations=observations,
+            )
+
+        if access_evidence_capture is not None:
+            available, selected = _collect_selected_response_headers(
+                response,
+                ("Location",),
+            )
+            access_evidence_capture.update(
+                available=available,
+                location_values=selected.get("location", ()),
+            )
+
+        if disclosure_evidence_capture is not None:
+            from .checks.disclosure_evidence import classify_server_headers, media_type as normalize_media_type
+            from .checks.disclosure_evidence import SERVER_HEADER_NAMES
+            selected_names = tuple(SERVER_HEADER_NAMES) + ("Content-Type", "Content-Encoding", "Content-Length")
+            available, selected = _collect_selected_response_headers(response, selected_names)
+            server_names, server_types = classify_server_headers(selected) if available else ((), ())
+            content_types = selected.get("content-type", ())
+            raw_content_type = content_types[0] if len(content_types) == 1 else None
+            response_media_type = normalize_media_type(raw_content_type)
+            if 400 <= response.status_code <= 599:
+                sample_limit = 4096
+            elif 200 <= response.status_code < 300 and response_media_type == "text/html":
+                sample_limit = 16384
+            else:
+                sample_limit = 0
+            sample, sample_complete = _read_bounded_identity_sample(response, sample_limit) if sample_limit else (b"", False)
+            if response.status_code == 206:
+                sample_complete = False
+            disclosure_evidence_capture.update(
+                status=response.status_code,
+                header_available=available,
+                server_header_names=server_names,
+                server_info_types=server_types,
+                media_type=response_media_type,
+                sample=sample,
+                sample_complete=sample_complete,
+            )
+
+        # Exclude Set-Cookie entirely from generic response evidence/report data.
+        response_headers = {
+            name: response.headers[name]
+            for name in response.headers
+            if name.lower() != "set-cookie"
+        }
+        return response.status_code, response_headers, None
 
     except requests.exceptions.Timeout:
         return None, {}, "timeout"
@@ -371,10 +931,134 @@ def _safe_get_response(
         return None, {}, "connection"
 
     finally:
-        if response is not None:
-            response.close()
+        try:
+            if response is not None:
+                response.close()
+        finally:
+            session.close()
 
-        session.close()
+
+def _safe_cors_preflight(target, deadline=None, capture=None):
+    """Send exactly one bounded, pinned OPTIONS preflight to the target URL."""
+    parsed, hostname, public_ips = target
+    if deadline is not None and time.monotonic() >= deadline:
+        if capture is not None:
+            capture.update(available=False, error="timeout")
+        return "timeout"
+    ip = public_ips[0]
+    ip_for_url = f"[{ip}]" if ":" in ip else ip
+    request_url = urlunsplit(("https", f"{ip_for_url}:443", parsed.path or "/", parsed.query, ""))
+    remaining = None if deadline is None else deadline - time.monotonic()
+    if remaining is not None and remaining <= 0:
+        if capture is not None:
+            capture.update(available=False, error="timeout")
+        return "timeout"
+    timeout = Timeout(connect=3.0, read=5.0) if remaining is None else Timeout(
+        total=remaining, connect=min(3.0, remaining), read=min(5.0, remaining)
+    )
+    session = requests.Session()
+    session.trust_env = False
+    session.mount("https://", PinnedIPAdapter(hostname))
+    response = None
+    try:
+        response = session.options(
+            request_url,
+            headers={
+                "Host": f"[{hostname}]" if ":" in hostname else hostname,
+                "Origin": "https://cybershield.invalid",
+                "Access-Control-Request-Method": "GET",
+                "Access-Control-Request-Headers": "x-cybershield-audit",
+                "User-Agent": "CyberShield/1.0",
+                "Connection": "close",
+            },
+            timeout=timeout,
+            allow_redirects=False,
+            stream=True,
+            verify=True,
+        )
+        available, headers = _collect_selected_response_headers(
+            response,
+            (
+                "Access-Control-Allow-Origin",
+                "Access-Control-Allow-Credentials",
+                "Access-Control-Allow-Methods",
+                "Access-Control-Allow-Headers",
+                "Vary",
+            ),
+        )
+        if capture is not None:
+            capture.update(status=response.status_code, available=available, error=None if available else "evidence")
+            if available:
+                capture["headers"] = headers
+        return None if available else "evidence"
+    except requests.exceptions.Timeout:
+        if capture is not None:
+            capture.update(available=False, error="timeout")
+        return "timeout"
+    except requests.exceptions.SSLError:
+        if capture is not None:
+            capture.update(available=False, error="tls")
+        return "tls"
+    except requests.exceptions.RequestException:
+        if capture is not None:
+            capture.update(available=False, error="connection")
+        return "connection"
+    except Exception:
+        if capture is not None:
+            capture.update(available=False, error="internal")
+        return "internal"
+    finally:
+        try:
+            if response is not None:
+                response.close()
+        finally:
+            session.close()
+
+
+def _safe_http_redirect_probe(target, deadline=None, capture=None):
+    """Make one pinned, body-free GET to the authorized target's HTTP root."""
+    parsed, hostname, public_ips = target
+    if deadline is not None and time.monotonic() >= deadline:
+        return "timeout"
+    ip = public_ips[0]
+    ip_for_url = f"[{ip}]" if ":" in ip else ip
+    request_url = f"http://{ip_for_url}:80/"
+    remaining = None if deadline is None else deadline - time.monotonic()
+    if remaining is not None and remaining <= 0:
+        return "timeout"
+    if remaining is None:
+        timeout = Timeout(connect=3.0, read=5.0)
+    else:
+        timeout = Timeout(total=remaining, connect=min(3.0, remaining), read=min(5.0, remaining))
+    session = requests.Session()
+    session.trust_env = False
+    response = None
+    try:
+        response = session.get(
+            request_url,
+            headers={"Host": f"[{hostname}]" if ":" in hostname else hostname,
+                     "User-Agent": "CyberShield/1.0", "Connection": "close"},
+            timeout=timeout,
+            allow_redirects=False,
+            stream=True,
+        )
+        if capture is not None:
+            capture.update(status=response.status_code,
+                           location=response.headers.get("Location"),
+                           request_url=request_url)
+        return None
+    except requests.exceptions.Timeout:
+        return "timeout"
+    except requests.exceptions.RequestException:
+        return "connection"
+    except Exception:
+        return "internal"
+    finally:
+        try:
+            if response is not None:
+                response.close()
+        finally:
+            session.close()
 
 
 def check_https(url: str) -> dict:
