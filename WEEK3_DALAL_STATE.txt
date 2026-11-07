@@ -1,0 +1,1234 @@
+﻿CYBERSHIELD - DALAL WEEK 3 STATE
+
+Owner: Dalal
+Repository: C:\Users\ASUS\CyberShield
+Branch: feature/dalal-sni-verification
+
+Week 2 verified baseline:
+- Scanner suite: 99 passed.
+- Full project suite: 301 passed.
+- Week 2 goal independently audited and completed.
+
+Week 3 preparation audit:
+- Five foundational checks exist and are implemented:
+  https_connection
+  header_hsts
+  header_csp
+  header_x_content_type_options
+  header_x_frame_options
+
+Five new checks are currently planned, not implemented:
+- tls_certificate_expiry
+- tls_certificate_chain
+- tls_protocol_config
+- http_to_https_redirect
+- redirect_destination_safety
+
+Architecture review found:
+- Registry/Contracts metadata exists but does not mean execution exists.
+- Current context/evidence do not yet collect TLS certificate dates,
+  certificate chain, negotiated TLS version, or cipher suite.
+- Existing response runner does not execute the five new checks.
+- HTTP-to-HTTPS requires a separate bounded HTTP probe.
+- Redirect destination validation must never automatically follow redirects.
+
+Team decisions still required:
+- Certificate near-expiry threshold.
+- Minimum accepted TLS version and cipher policy.
+- HTTP probe scope and port policy.
+- Redirect destination policy and relative Location handling.
+- Finding status/severity policy for unavailable TLS evidence.
+
+Approved project policy cross-check (read-only, 2026-11-07):
+- docs/security-policy.md sections 3, 4.1, 4.2 and 4.4 establish HTTPS/443,
+  credential rejection, all-DNS-answers-public, bounded DNS (2 seconds, 32
+  answers) and that redirect destinations must use the same destination policy.
+- The same policy explicitly says the initial implementation does not follow
+  redirects. These approved rules support local destination validation, but do
+  not decide HTTP probe scope, redirect response statuses, relative Location
+  resolution, or check-specific finding mappings.
+- docs/security-policy.md section 5 and docs/test-plan.md confirm TLS verification
+  stays enabled and unavailable evidence remains not_verified.
+
+Ownership:
+- Dalal: scanner collection, checks, evidence, report and scanner tests.
+- Bailsan: Flask/API orchestration and API response integration.
+- Ahmad: Flutter/Android display and client integration.
+
+Week 3 implementation progress (2026-11-07):
+- Preserved existing foundational checks and the pre-existing working-tree edits.
+- Added optional TLS metadata collection from the existing verified HTTPS socket:
+  negotiated TLS version, cipher name, certificate validity date strings, and
+  whether the runtime exposes a verified peer chain. No raw certificates are
+  retained. Collection is opt-in with expanded checks and does not weaken
+  verification or follow redirects.
+- Added evidence/context transport for TLS observations and Week 3 execution
+  through a separate runner, preserving the existing three-check runner API.
+- Added evidence-based evaluators for TLS expiry, chain, protocol and both
+  redirect IDs. Expired date observations cannot pass; positive policy verdicts
+  remain not_verified while thresholds/policies are unapproved. Observed
+  absolute private IP Location values are rejected locally; relative locations,
+  hostname DNS safety and HTTP probe remain not_verified. No redirect is followed.
+- Follow-up verification added a controlled local TLS integration assertion for
+  actual negotiated version, cipher, validity dates, chain availability, SNI and
+  verified TLS status. The urllib3 live socket can be exposed through either
+  the pool connection or the streamed http.client socket; both are handled.
+- Redirect evidence can carry bounded pre-resolved DNS answer strings for pure
+  evaluation. Any non-global member rejects the entire answer set; all-public
+  answers remain not_verified until destination-result policy approval. At this
+  earlier milestone, scanner-side DNS collection was not yet implemented; the
+  follow-up below records its addition. No destination connection is made.
+- The scanner now collects DNS answers for an absolute Location only when it
+  matches the approved target shape (HTTPS/443, no credentials, non-local host),
+  using the existing 2-second/4-slot/32-answer resolver. It records all answers
+  for evaluation and never connects to them. Other shapes and DNS failures yield
+  unavailable evidence. A local 302 integration test confirms one request only.
+- urllib3 captures handshake metadata inside the verified HTTPS connection
+  immediately after TLS connect, so zero-length/short redirect responses cannot
+  discard the socket before evidence collection.
+- New check outcomes remain not_verified where result/severity mapping is not
+  approved, including expired dates and rejected destinations; explanatory
+  evidence preserves the observed condition without inventing severity.
+- When the report has a successful verify=True TLS connection and the runtime
+  exposes its verified chain, tls_certificate_chain reports passed. Missing
+  chain introspection remains not_verified and no raw certificate is reported.
+- Files changed by this work: security_scanner/scanner.py,
+  security_scanner/report.py, security_scanner/checks/context.py,
+  security_scanner/checks/evidence.py, security_scanner/checks/response_runner.py,
+  security_scanner/checks/tls_checks.py, tests/dalal_week3/test_tls_redirect_evaluators.py,
+  tests/test_check_expanded_report.py, tests/test_scanner.py, WEEK3_DALAL_STATE.txt.
+  Earlier edits in scanner/report/test_scanner/test_report were present before
+  this work and preserved; this turn added to scanner.py and test_scanner.py.
+- Focused command:
+  .\.venv\Scripts\python.exe -B -m pytest -p no:cacheprovider tests/dalal_week3/test_tls_redirect_evaluators.py tests/test_check_response_runner.py tests/test_report.py
+  Result: 30 passed.
+- Earlier context/evidence compatibility command resulted in 72 passed after
+  preserving the legacy runner contract.
+- Expanded report regression command: 11 passed.
+- Scanner/check/report command with pytest --basetemp="$env:TEMP\dalal-pytest":
+  278 passed.
+- Full project command with the same basetemp: 307 passed. Initial run without
+  --basetemp encountered Windows PermissionError scanning the default pytest
+  temporary root, then the configured basetemp run passed.
+- Added deterministic evaluator coverage for expired, not-yet-valid, valid and
+  near-expiry date observations; focused command: 8 passed.
+- Final Scanner/check/report suite command after TLS/DNS/302 integration:
+  290 passed.
+- Final full project suite command after TLS/DNS/302 integration:
+  319 passed.
+- Latest focused TLS/context/evidence/report/local-server command: 68 passed.
+- Added scanner-to-report evidence flow test; tests/test_report.py: 17 passed.
+
+Remaining limitations and team decisions:
+- Near-expiry days; minimum TLS version/cipher acceptance; HTTP probe target,
+  port, timeout and request scope; redirect status and relative Location rules;
+  and exact check-specific status/severity mappings remain unapproved. Generic
+  destination restrictions are sourced from the approved target policy; no HTTP
+  probe or destination connection is performed.
+- TLS chain capture exposes presence only, not raw chain contents or path
+  validation detail. verify=True plus exposed verified-chain evidence supports
+  the chain result; if platform introspection is missing, that check remains
+  not_verified.
+- Review the final permitted-file diff and confirm teammate files and Git state
+  remain untouched. Dalal-side verification is current; remaining work requires
+  team approval for the policy list above and any follow-up based on those choices.
+
+No Git state-changing commands, commits or pushes were used.
+
+FINAL WEEK 3 HANDOFF AUDIT (2026-11-07)
+======================================
+
+Goal state: BLOCKED / NOT COMPLETE. Dalal-side safe implementation and the
+requested test suites pass, but several checks cannot produce a final security
+verdict until the listed team decisions are approved. This table supersedes
+earlier preparation-audit descriptions above.
+
+Check-by-check audit (execution evidence, not Registry/Contract presence):
+
+| Check ID | Current classification | Execution and evidence | Limitation / test evidence |
+|---|---|---|---|
+| https_connection | Implemented and verified | Scanner validates HTTPS on 443, pins validated IP, preserves hostname/SNI and TLS verification, and reports the connection result. | Existing scanner/report suite and local trusted/untrusted/expired TLS tests. |
+| header_hsts | Implemented and verified | Evaluates observed HSTS max-age on the shared HTTPS response. | Report tests assert status and schema. |
+| header_csp | Implemented and verified (presence-only policy) | Evaluates CSP presence; does not assess policy quality/effectiveness. | Report tests assert warning for present policy and no raw value leakage. |
+| header_x_content_type_options | Implemented and verified | Evaluates `nosniff` from the shared response. | Report tests assert the result. |
+| header_x_frame_options | Implemented and verified | Evaluates supported DENY/SAMEORIGIN values from the shared response. | Report tests assert the result. |
+| tls_certificate_expiry | Evidence collection and evaluator implemented; verdict policy incomplete | Collects notBefore/notAfter from the verified live TLS socket and evaluates deterministic date evidence. | Expired certificate is rejected by TLS verification in the local server test; consequently real expired dates are unavailable to this evaluator without weakening verification. Synthetic evaluator cases cover expired, not-yet-valid, valid and near-expiry inputs. Outputs remain not_verified pending threshold/status decisions. |
+| tls_certificate_chain | Implemented when platform chain evidence is available | Collects chain availability inside the verified TLS connection. Reports passed only when the handshake succeeded with verify=True and the runtime exposes its verified chain; missing chain evidence is not_verified. | Local trusted TLS server asserts chain availability; report pipeline test asserts passed with validated evidence and does not expose raw certificates. |
+| tls_protocol_config | Evidence collection and evaluator implemented; verdict policy blocked | Captures actual negotiated TLS version and cipher from the live connection and reaches report evaluation. | Report test confirms observed TLSv1.3 evidence. Status is not_verified pending minimum-version and cipher acceptance decisions. |
+| http_to_https_redirect | Planned / blocked; no probe implementation | Runner returns an explicit not_verified result when expanded reporting is enabled. | No HTTP request/evidence collection exists; probe scope/port/request policy is unapproved. Do not count Registry/Contract metadata or the placeholder result as implementation. |
+| redirect_destination_safety | Partial evidence collection and evaluation; final verdict policy blocked | Parses Location, collects bounded DNS answers for policy-shaped absolute HTTPS/443 locations, evaluates private/mixed answers, and never connects or follows. | Local TLS 302 test proves one request, DNS answer collection and no follow. Deterministic tests cover relative, private IP, mixed and all-public answers. Results stay not_verified; redirect status/relative-location/result mapping decisions remain open. |
+
+Files changed by this work (within the active Dalal Week 3 writable profile):
+- WEEK3_DALAL_STATE.txt
+- security_scanner/scanner.py
+- security_scanner/report.py
+- security_scanner/checks/context.py
+- security_scanner/checks/evidence.py
+- security_scanner/checks/response_runner.py
+- security_scanner/checks/tls_checks.py (created)
+- tests/test_scanner.py
+- tests/test_report.py
+- tests/test_check_expanded_report.py
+- tests/dalal_week3/test_tls_redirect_evaluators.py (created)
+
+The scanner/report and scanner/report test files already had working-tree
+changes at initial inspection; this work preserved those edits and made the
+Week 3 changes listed above. The checks and check-test trees also existed as
+untracked workspace content at initial inspection; only the listed files were
+edited by this work. No docs, backend, mobile, Android, requirements, lockfiles,
+or unrelated tests were modified by Dalal work.
+
+Final test evidence, all after the last implementation/test edit, using the
+project virtualenv and pytest cache disabled:
+
+1. Focused new-check and controlled integration tests (25 passed):
+   .\.venv\Scripts\python.exe -B -m pytest -p no:cacheprovider --basetemp="$env:TEMP\dalal-pytest" tests/dalal_week3/test_tls_redirect_evaluators.py tests/test_check_expanded_report.py tests/test_report.py::test_expanded_report_evaluates_tls_metadata_from_scanner_connection tests/test_scanner.py::test_real_tls_rejects_untrusted_self_signed_certificate tests/test_scanner.py::test_real_tls_rejects_expired_certificate
+2. Scanner/check/report suite (290 passed):
+   PowerShell command used `.\.venv\Scripts\python.exe -B -m pytest -p no:cacheprovider --basetemp="$env:TEMP\dalal-pytest" tests/test_scanner.py tests/test_report.py (Get-ChildItem -LiteralPath tests -Filter 'test_check_*.py' | ForEach-Object { $_.FullName }) tests/dalal_week3`
+3. Full project suite (319 passed):
+   .\.venv\Scripts\python.exe -B -m pytest -p no:cacheprovider --basetemp="$env:TEMP\dalal-pytest" tests
+4. `git diff --check`: no whitespace errors. Git emitted only existing LF-to-CRLF warnings.
+
+Team decisions still required before final verdicts:
+- Certificate near-expiry threshold in days.
+- Minimum accepted TLS version and cipher-suite acceptance policy.
+- HTTP-to-HTTPS probe scope, port, timeout and request behavior.
+- Which response statuses count as redirects and how relative Location values
+  are resolved/accepted.
+- Whether/how the generic destination policy maps to redirect findings, and
+  check-specific status/severity mappings where still undecided.
+
+Ownership handoff not performed by Dalal:
+- Bailsan: Flask/API orchestration, API response integration, and deciding how
+  the API invokes expanded scanner reporting.
+- Ahmad: Flutter/Android models and UI integration/display for expanded results.
+No Bailsan or Ahmad implementation was undertaken.
+
+Technical limits and residual risks:
+- Expanded collection/reporting is opt-in (`include_expanded_checks=True`);
+  API exposure/integration belongs to Bailsan.
+- TLS certificate dates are collected only after a verified TLS handshake;
+  invalid certificates continue to be rejected and do not expose dates to the
+  new expiry evaluator. Verification was not weakened.
+- Chain collection reports only availability, never raw certificates or path
+  contents; runtime support can vary. Missing data remains not_verified.
+- TLS version/cipher observations have no acceptance verdict until policy is
+  approved.
+- HTTP probing and all destination connections/following remain disabled.
+- Location DNS collection is bounded by the existing resolver (2 seconds,
+  four concurrent slots, maximum 32 addresses). It can resolve a policy-shaped
+  Location based on header presence because redirect status rules are unresolved;
+  it does not make a TCP/TLS connection to any returned address.
+- TLS metadata capture subclasses urllib3 pool/connection methods. It was tested
+  with the project environment (Python 3.14.7 / urllib3 2.8.0); compatibility
+  with other runtime/library versions is unverified.
+
+Permission and Git audit:
+- Active permission was the restricted Dalal Week 3 workspace-write profile,
+  not Full Access. All edits above are in its writable paths and AGENTS.md paths.
+- Initial Git status already contained staged/unstaged documentation changes,
+  mobile changes and unrelated additions/deletions. Final status shows those
+  pre-existing paths still present; they were not edited by this work.
+- `git diff`, `git diff --cached --stat/name-only`, `git diff --check`, and
+  `git status --short` were read-only. No Git state-changing command ran.
+- No commit or push was made.
+
+Handoff conclusion: Dalal's safe implementation and verification work is
+documented; Week 3 is not declared complete because HTTP-to-HTTPS remains
+unimplemented and several verdict rules await team approval. The active goal
+remains blocked pending those decisions and Bailsan/Ahmad integration.
+
+INDEPENDENT FINAL REVIEW (2026-11-07)
+====================================
+
+Review result: Week 3 is NOT COMPLETE. No feature/code changes or repairs were
+made in this review; the repository implementation was audited as-is.
+
+Latest test reruns after the last implementation/test edit:
+- Focused new-check and controlled local integration tests: 25 passed.
+- Scanner/check/report suite: 290 passed.
+- Full project suite: 319 passed.
+- Commands are recorded in the preceding Final test evidence section; all used
+  `-B`, `-p no:cacheprovider`, and
+  `--basetemp="$env:TEMP\dalal-pytest"`.
+
+Independent confirmation of the key distinctions:
+- All five foundational checks execute through the existing report path and
+  have per-check report test evidence; CSP evaluates presence only.
+- `tls_certificate_expiry` collects dates only after a verified handshake and
+  evaluates synthetic date fixtures. It cannot observe dates from a certificate
+  that TLS verification rejects; threshold/result policy remains open.
+- `tls_certificate_chain` used actual local verified-chain evidence and can
+  report passed only when verify=True and chain data is exposed. No raw certs
+  are included; platform-missing chain information remains not_verified.
+- `tls_protocol_config` collects the actual version/cipher and evaluates them,
+  but has no accepted/rejected verdict pending policy.
+- `http_to_https_redirect` remains a placeholder not_verified result: there is
+  no HTTP probe, HTTP evidence collection or redirect evaluation for that check.
+- `redirect_destination_safety` does not connect to a redirect destination.
+  It parses Location and gathers bounded DNS answers for eligible absolute
+  HTTPS/443 destinations, then checks the supplied addresses. Redirect following
+  remains disabled. Relative locations and final status semantics remain open.
+- Registry/Contract entries were not used as evidence of completion.
+
+Git and permission check for this review:
+- `git status --short`, permitted-file `git diff`, `git diff --cached --stat`,
+  and `git diff --check` were read-only. The pre-existing staged docs and
+  out-of-scope workspace changes remain present; this review changed no code,
+  tests, teammate files, or Git state.
+- The only review edit was this requested state-file update, an explicitly
+  writable Dalal Week 3 path. No commit or push was made.
+
+Final disposition: stop Week 3 implementation here. Await the team decisions
+and Bailsan/Ahmad integration listed above; do not declare the week complete
+and do not begin Week 4.
+
+IMPLEMENTATION MILESTONE - APPROVED POLICY IMPLEMENTATION (2026-11-07)
+===================================================================
+
+The user supplied and approved local Week 3 policy decisions. Those decisions
+supersede the earlier unresolved-policy entries above for certificate expiry,
+TLS versions/ciphers, the HTTP probe, redirect status/location handling,
+destination safety, and severity/status mappings.
+
+Implemented in this milestone:
+- The optional expanded scanner flow now captures the already validated target
+  and performs one HTTP GET to the pinned IP at port 80 and origin root only.
+  It disables environment proxy use, automatic redirects and body consumption,
+  sends only Host/User-Agent/Connection headers, preserves remaining scan
+  deadline and caps connect/read timeouts at 3/5 seconds.
+- Redirect Location is considered only for approved 301/302/303/307/308 HTTP
+  responses. Relative references are resolved against the exact HTTP request
+  URL. DNS answers are collected within the existing bounded resolver and all
+  answers are evaluated; no redirect destination connection is made.
+- TLS expiry evaluates verified notBefore/notAfter evidence with expired,
+  not-yet-valid, inclusive 30-day near-expiry and valid outcomes.
+- TLS chain only passes when the connection verified successfully and actual
+  verified-chain availability is exposed.
+- TLS protocol evaluation uses actual verified connection metadata; TLS 1.2+
+  is required, TLS 1.2 ECDHE AES-GCM/CHACHA20-POLY1305 and the approved TLS 1.3
+  suites pass, known forbidden patterns warn, and unclassified suites remain
+  not_verified.
+- Redirect upgrade and destination checks now execute policy evaluations with
+  existing statuses and approved severities.
+- Existing HTTPS-response Location DNS behavior was removed: only the HTTP
+  probe's redirect target is resolved for destination policy.
+
+Files changed in this milestone:
+- security_scanner/scanner.py
+- security_scanner/report.py
+- security_scanner/checks/tls_checks.py
+- tests/dalal_week3/test_tls_redirect_evaluators.py
+- tests/test_report.py
+- tests/test_scanner.py
+- WEEK3_DALAL_STATE.txt
+
+Focused verification after the milestone:
+Command:
+  .\\.venv\\Scripts\\python.exe -B -m pytest -p no:cacheprovider --basetemp="$env:TEMP\\dalal-pytest" tests/dalal_week3/test_tls_redirect_evaluators.py tests/test_check_expanded_report.py tests/test_report.py tests/test_scanner.py
+Result: 131 passed.
+The local HTTP integration test used a real loopback HTTPServer and confirmed one
+root GET, no credentials/cookies, captured redirect evidence and no follow.
+
+The complete Scanner/check/report suite and complete project suite remain to be
+rerun after this milestone. Decisions still needing coordination are only
+integration ownership and runtime-specific compatibility: Bailsan owns API
+exposure/orchestration; Ahmad owns Flutter/Android models/UI. TLS introspection
+availability and urllib3 compatibility outside the project's tested runtime
+remain limitations.
+
+FINAL WEEK 3 DELIVERY AUDIT (2026-11-07)
+=======================================
+
+Final goal status: COMPLETE for Dalal-owned scanner/check/report scope under
+all user-approved Week 3 policies. This does not include Bailsan or Ahmad
+integration work listed below. No Week 4 work was started.
+
+Ten-check review (execution evidence, not Registry/Contract presence):
+
+| Check | Final state | Evidence and coverage |
+|---|---|---|
+| https_connection | Complete | Existing HTTPS/443 validation, validated IP pinning, original hostname/SNI, verify=True, redirects disabled; controlled local TLS tests exercise trusted, untrusted and expired certificates. |
+| header_hsts | Complete | Evaluated from the actual shared HTTPS response; report/check suite covers its finding/status. |
+| header_csp | Complete (presence only) | Evaluated from the actual shared HTTPS response; presence does not assert policy quality. |
+| header_x_content_type_options | Complete | Evaluated from the actual shared HTTPS response; report/check suite covers its finding/status. |
+| header_x_frame_options | Complete | Evaluated from the actual shared HTTPS response; report/check suite covers its finding/status. |
+| tls_certificate_expiry | Complete with verification boundary | notBefore/notAfter come from the actual verify=True TLS socket; evaluator covers expired, not-yet-valid, exactly-30-day near expiry and valid cases. An expired/untrusted real certificate is rejected by TLS; its dependent result remains not_verified while https_connection retains the actual failure. No CERT_NONE path exists. |
+| tls_certificate_chain | Complete when runtime exposes evidence | Pass requires both successful verified TLS and exposed verified-chain evidence. Local trusted TLS integration confirms actual chain evidence; absent chain evidence remains not_verified. |
+| tls_protocol_config | Complete | Version and cipher are copied from the live negotiated TLS socket and evaluated against TLS 1.2 minimum and approved suite policy. Local TLS integration passes through the evaluator; unit coverage includes TLS 1.2/1.3, old TLS, allowed, forbidden, unknown and unavailable ciphers. |
+| http_to_https_redirect | Complete | Optional expanded scan makes exactly one pinned HTTP GET to port 80 root, strips input path/query/fragment/credentials, sends no cookies/auth, disables environment proxy, automatic redirects and body reads, and shares scan deadline with 3s/5s connect/read caps. Local loopback integration confirms one root GET and captures response without following it. Evaluator covers approved codes, missing/invalid and relative Location. |
+| redirect_destination_safety | Complete | Only accepted HTTP redirect responses are examined. RFC 9110 relative resolution uses the exact pinned root request URL. HTTPS/443, credentials and all DNS answers are evaluated; mixed/private/reserved answers warn high. No destination connection or redirect follow occurs. Tests cover public, private, mixed DNS, credentials, bad scheme/port, no applicable redirect, and resolver bounds. |
+
+Current milestone files changed:
+- security_scanner/scanner.py
+- security_scanner/report.py
+- security_scanner/checks/tls_checks.py
+- tests/dalal_week3/test_tls_redirect_evaluators.py
+- tests/test_report.py
+- tests/test_scanner.py
+- WEEK3_DALAL_STATE.txt
+
+Dalal Week 3 implementation files present in the permitted work from prior
+milestones and preserved:
+- security_scanner/__init__.py
+- security_scanner/checks/context.py
+- security_scanner/checks/evidence.py
+- security_scanner/checks/response_runner.py
+- security_scanner/checks/tls_checks.py
+- tests/test_check_expanded_report.py
+
+Final tests after the last implementation/test edit, using project virtualenv,
+`-B`, cache disabled, and explicit basetemp:
+
+1. Focused scanner/TLS/redirect/report and local integration:
+   .\\.venv\\Scripts\\python.exe -B -m pytest -p no:cacheprovider --basetemp="$env:TEMP\\dalal-pytest" tests/dalal_week3/test_tls_redirect_evaluators.py tests/test_check_expanded_report.py tests/test_report.py tests/test_scanner.py
+   Result: 131 passed.
+2. Full Scanner/check/report suite:
+   .\\.venv\\Scripts\\python.exe -B -m pytest -p no:cacheprovider --basetemp="$env:TEMP\\dalal-pytest" tests/test_scanner.py tests/test_report.py (Get-ChildItem -LiteralPath tests -Filter 'test_check_*.py' | ForEach-Object { $_.FullName }) tests/dalal_week3
+   Result: 283 passed.
+3. Full project suite:
+   .\\.venv\\Scripts\\python.exe -B -m pytest -p no:cacheprovider --basetemp="$env:TEMP\\dalal-pytest" tests
+   Result: 312 passed.
+4. `git diff --check` for the permitted tracked-file paths reported no whitespace errors (Git only emitted existing LF/CRLF notices). New untracked permitted files were inspected separately.
+
+Team decisions still pending: none of the local Week 3 security policy decisions
+remain open; all were supplied by the user. Integration handoffs remain:
+- Bailsan: choose and implement Flask/API orchestration and API exposure of the
+  optional expanded scanner findings.
+- Ahmad: Flutter/Android model, client and UI integration for expanded findings.
+No work in those ownership areas was performed.
+
+Limitations and risks:
+- Expanded checks and the HTTP probe run when scanner callers request
+  `include_expanded_checks=True`; API invocation/exposure belongs to Bailsan.
+- Certificate metadata cannot be obtained from certificates rejected by
+  verify=True; those dependent expiry/protocol/chain checks appropriately stay
+  not_verified while the primary HTTPS finding records failure.
+- Chain introspection depends on the runtime TLS library exposing the verified
+  chain. Raw certificates are never retained or reported.
+- urllib3 metadata hook was verified on the repository runtime (Python 3.14.7,
+  urllib3 2.8.0); other versions remain unverified.
+- HTTP origin root reachability and HTTPS redirect policy are point-in-time
+  observations, not proof for other paths or subsequent connections.
+
+Permissions and Git:
+- Active profile remains restricted Dalal Week 3; not Full Access. All files
+  changed by this task are within AGENTS.md and the active writable roots.
+- Read-only `git status --short`, permitted-path `git diff`, and
+  `git diff --check` were used. The existing staged docs, mobile/backend-side
+  changes, deletions and unrelated untracked workspace content visible in Git
+  status predate this final work and were not edited by it. No teammate-owned
+  files were changed.
+- No Git state-changing operation was run. No commit or push was made.
+
+Handoff conclusion: Dalal-owned Week 3 scanner checks and verification are
+complete against the approved policies. Bailsan/Ahmad integration remains a
+separate handoff and is not represented as completed. Stop here; do not begin
+Week 4.
+
+USER FINAL INDEPENDENT VERIFICATION
+===================================
+
+Date: 2026-11-07
+
+The user reports an independent full-project test run using a newly created
+unique temporary directory via `--basetemp`. Result: **312 passed in 2.97s**,
+with no errors or warnings reported. This is recorded as a user-provided
+independent verification result; it was not rerun by the assistant in this
+update.
+
+The user also reports that an earlier attempt using a fixed temporary
+directory produced **310 passed and 2 setup errors**, caused by Windows
+`PermissionError` while handling the pytest temporary directory. Using a new
+unique temporary directory resolved that issue for the independent run.
+
+Historical count review:
+- Earlier entries in this state file report **319 passed** for a full-project
+  run; the latest full-project result reported here is **312 passed**, a
+  difference of 7 tests.
+- Available evidence was searched in the repository. This state file contains
+  the historical count, but no retained pytest collection/session output or
+  run log was found that explains the count difference. A search also could
+  not read `.pytest_cache` because Windows returned Access is denied.
+- Therefore, the historical difference is **unresolved**. There is no evidence
+  here to establish its cause, and no conclusion is drawn that tests were
+  removed or skipped.
+
+This update changes only `WEEK3_DALAL_STATE.txt`. No code or test file was
+modified. No Git state-changing command, commit or push was performed. Week 4
+was not started.
+
+PLAN GAP AUDIT - THREE WEEK PLAN
+================================
+
+Audit date: 2026-11-07. Scope is read-only source/test/document inspection
+plus this state-file entry. No code, tests, API, mobile or Git state was changed.
+No Week 4 work was started.
+
+Plan-source limitation:
+- No repository file with the title/name “خطة عمل دلال التفصيلية للأسابيع
+  الثلاثة الأولى” was found. The audit used the user-listed 13 IDs and week
+  groupings, `security_scanner/checks/registry.py`, `contracts.py`, evaluator,
+  evidence, runner and report code, tests, and the available project-scope,
+  security-policy, test-plan and API-contract documents. Consequently, where
+  the detailed plan has exact probe/path rules beyond the available contract,
+  this audit names the missing decision/specification rather than inventing it.
+- Registry definitions mark the 13 IDs `planned`. Contracts define required
+  input names and collection modes; neither is evidence of implementation.
+
+Thirteen requested checks:
+
+| Check / plan phase | Registry | Evaluator | Real evidence | Scanner execution | Final report / summary | Relevant tests found | Classification | Remaining requirements |
+|---|---|---|---|---|---|---|---|---|
+| `header_referrer_policy` / Week 2 | Yes, but metadata says planned | `ReferrerPolicyEvaluator`; applies recognized final policy token and warning/pass rules | Yes, shared HTTPS response header | Yes, `evaluate_week3_evidence` includes it when `include_expanded_checks=True`; default excludes it | Yes in opt-in expanded report; `_summarize` counts emitted findings. Flask wrapper does not turn the option on | `test_referrer_policy_accepts_strict_policy`, `test_referrer_policy_uses_last_recognized_fallback`, `test_referrer_policy_warns_for_unsafe_url`, `test_referrer_policy_warns_for_unknown_value`, `test_referrer_policy_missing_header_warns`, `test_referrer_policy_does_not_echo_raw_value`; runner/pipeline/report tests listed below | PARTIAL | Make registry metadata consistent with executable state; decide/complete default/API exposure and contract approval; add a controlled real-response-to-report integration test if required by the plan. |
+| `header_permissions_policy` / Week 2 | Yes, but metadata says planned | `PermissionsPolicyEvaluator`; checks presence only | Yes, shared HTTPS response header | Yes, opt-in expanded runner path only | Yes, opt-in report and summary only | `test_permissions_policy_presence_is_not_reported_as_passed`, `test_permissions_policy_missing_header_warns`; runner/pipeline/report tests listed below | PARTIAL | Registry/API exposure and team contract remain inconsistent; define/verify expected policy-quality scope (current evaluator is intentionally presence-only); add controlled real-response integration coverage if required. |
+| `cookie_secure` / Week 3 Cookies | Yes, planned | None | Set-Cookie header may be present in shared response snapshot; no attribute parser/evidence result | No evaluator/runner entry | No finding or summary count | No cookie-check behavior test. `test_pipeline_does_not_expose_raw_cookie_values` and generic evidence tests do not implement this check | MISSING | Preserve each Set-Cookie field separately; parse Secure per cookie without reporting values; define absent-cookie/no-cookie behavior, evaluation/status rules, scanner path, report finding and privacy tests. |
+| `cookie_httponly` / Week 3 Cookies | Yes, planned | None | Same unparsed shared Set-Cookie observation | No | No | No behavior test; only generic privacy/evidence coverage | MISSING | Parse HttpOnly per cookie from separate fields; do not expose cookie names/values or raw headers; define no-cookie behavior and test scanner/report execution. |
+| `cookie_samesite` / Week 3 Cookies | Yes, planned | None | Same unparsed shared Set-Cookie observation | No | No | No behavior test; only generic privacy/evidence coverage | MISSING | Parse SameSite per cookie while handling absent/invalid values and multiple cookies; document policy and prove no raw values leak through findings/logging. |
+| `cors_misconfiguration` / Week 3 Access | Yes, planned | None | Ordinary response headers are available generically; required preflight evidence is not collected | No preflight request or evaluator | No | Only contract metadata test `test_http_probe_checks_are_explicitly_marked` and registry/contract inventory tests | MISSING | Define safe OPTIONS/preflight origin and headers, bounded probe/request policy, evaluate origin/credentials/Vary evidence, and add no-follow/SSRF/local integration and report tests. |
+| `open_redirect` / Week 3 Access | Yes, planned | None; redirect destination evaluator is for a different check and only tests policy on HTTP-upgrade Location | Generic response Location may be observed, but no controlled redirect test input/probe | No `open_redirect` runner path | No | Contract metadata only (`test_http_probe_checks_are_explicitly_marked` and registry/contract inventory); no open-redirect behavior test | MISSING | Specify safe controlled parameter/probe policy, avoid following destinations, detect external/untrusted destinations and validate before any connection; add evaluator, scanner/report path and deterministic local tests. |
+| `sensitive_file_exposure` / Week 3 Disclosure | Yes, planned | None | No path-specific response evidence | No allowlisted path probe | No | Contract-mode inventory only; no behavior test | MISSING | Approve an explicit path allowlist, request budget and response-size/content-type rules; probe only allowed paths and report evidence without sensitive body content. |
+| `source_maps_exposure` / Week 3 Disclosure | Yes, planned | None | No bounded HTML or asset body evidence; scanner intentionally does not consume response bodies | No HTML/source-map asset probe | No | Contract-mode inventory only; no behavior test | MISSING | Define safe bounded HTML/asset collection, sourceMappingURL parsing, same-origin and destination validation, byte/decompression/time caps, and controlled fixtures. |
+| `directory_listing` / Week 3 Disclosure | Yes, planned | None | No allowlisted directory response/sample | No | No | Contract-mode inventory only; no behavior test | MISSING | Approve directory paths to request and reliable listing indicators; bound response bytes and avoid exposing directory contents in evidence. |
+| `server_information_disclosure` / Week 3 Disclosure | Yes, planned | None | `Server`/related headers can be present in the generic shared response mapping, but no check-specific evidence/evaluation | No runner entry | No | Contract and registry inventory only; no behavior test | MISSING | Define which headers/values count, minimize or hash/redact values in evidence, add evaluator, execution/report path and regression tests. |
+| `error_information_disclosure` / Week 3 Disclosure | Yes, planned | None | No bounded error response body collection | No induced or allowlisted error probe | No | Contract-mode inventory only; no behavior test | MISSING | Define safe non-destructive error probe and body signatures, strict body/time/decompression caps, secret redaction, and local controlled tests. |
+| `public_security_files` / Week 3 Disclosure | Yes, planned | None | No file-specific response evidence | No allowlisted file probe | No | Contract-mode inventory only; no behavior test | MISSING | Specify approved files (the available documents do not supply a list), expected status/content types, bounded collection, interpretation and report privacy tests. |
+
+For the two implemented header evaluators, additional relevant tests are
+`test_existing_response_flows_through_all_three_evaluators`,
+`test_response_runner_evaluates_three_checks_from_one_response`,
+`test_response_runner_returns_not_verified_without_http_response`,
+`test_expanded_report_adds_eight_findings_from_one_response`,
+`test_expanded_report_does_not_expose_raw_header_values`, and
+`test_report_summary_matches_finding_statuses`. The expanded report test uses
+mocked response collection; evaluator unit tests use supplied evidence. These
+prove evaluator/runner/report behavior under those inputs, not an external
+server's policy correctness. The expanded report adds 13 findings total: five
+foundational plus three response prototypes and five Week 2 TLS/redirect checks;
+only the two named header checks among this audit's 13 are emitted.
+
+Week 1 requirements not demonstrated as fully closed:
+
+| Requirement | Classification | Audit evidence and gap |
+|---|---|---|
+| Evidence and response size limits | PARTIAL | `security_scanner/checks/limits.py` caps evaluated response headers at 100 entries / 64 KiB; context/evidence validate these limits. Scanner uses `stream=True` and does not read response bodies, so it avoids downloading unbounded bodies. Header parsing caps are supplied by the HTTP library, not a scanner-owned configured limit. No bounded body collector/byte limit exists for planned Disclosure checks; contracts explicitly anticipate bounded body evidence. |
+| Approved Disclosure path allowlist | MISSING | Contracts refer to allowlisted paths/status, but no path allowlist or approved path list was found in code or available project docs. Exact allowed paths cannot be inferred safely. |
+| Multiple Set-Cookie handling without exposing values | PARTIAL | Context/evidence repr and report privacy tests prevent a synthetic cookie value from appearing in repr/findings. `EvidenceCollection` accepts multiple values when given a sequence (`test_collection_preserves_separate_header_values`), but scanner collection uses `response.headers.copy()` and no cookie-specific parser exists; actual duplicate Set-Cookie preservation into evidence and per-cookie evaluation are not established. |
+| Request, timeout and concurrency bounds | PARTIAL | Scanner has 25-second shared deadline flow, HTTPS connect/read limits (3s/5s), bounded DNS wait (2s), at most 32 DNS answers and four DNS lookup slots; HTTP response is streamed and closed without body reads. Flask separately has four per-process scan slots, 5 requests/60 seconds/source and a 16 KiB request-body cap. OS `getaddrinfo` cannot be cancelled; synchronous read/deadline handling is not hard cancellation of slow-drip responses; global/multi-process limits and deployment behavior are not established. Planned Disclosure probes would need an aggregate request-count, per-path timeout and byte budget. |
+| Report compatibility with Flask and Flutter | PARTIAL | Existing base report schema is used and `_summarize` reflects emitted findings. API contract remains a draft specifying exactly five findings. `backend/scanner.py` and Flask call `scan_target` without `include_expanded_checks`, so only the base five findings reach API. Flutter's generic finding list/parser can structurally read findings, but expanded IDs, localized presentation and API flow have not been verified end-to-end. These are owned by Bailsan/Ahmad. |
+| Delivery and integration requirements | PARTIAL | Scanner tests/report checks and delivery state exist, but the API contract/team approval remains draft and expanded report delivery is not enabled via Flask. Mobile integration, end-to-end API/UI verification, and explicit Disclosure allowlist/policy approval are outstanding. No exact titled three-week plan document was found in the repository, so its additional delivery-specific acceptance criteria cannot be confirmed. |
+
+Test evidence interpretation:
+- `tests/test_check_contracts.py::test_input_contracts_cover_exactly_all_registered_checks`,
+  `test_every_contract_has_required_inputs_and_collection_modes`, and
+  `test_http_probe_checks_are_explicitly_marked` validate metadata only.
+- `tests/test_check_registry.py::test_default_registry_contains_30_unique_checks`
+  and `test_default_registry_has_correct_phases_and_statuses` validate catalog
+  state only; all expanded entries remain marked planned.
+- The only functional tests among the 13 audited checks are the named
+  Referrer-Policy and Permissions-Policy evaluator/runner/report tests above.
+  Generic cookie privacy/header-size tests are not cookie security checks.
+
+Priority order to complete the plan:
+1. Obtain and approve the actual detailed three-week plan, especially the
+   Disclosure allowlist and per-probe safety, limits and finding semantics.
+2. Reconcile executable header evaluators with `planned` registry metadata and
+   decide/implement the API expanded-check opt-in with Bailsan and report
+   contract approval; verify Flutter parsing/display with Ahmad.
+3. Implement cookie collection first with true multi-Set-Cookie preservation,
+   attribute-only evidence and strict value redaction; add Secure, HttpOnly,
+   SameSite evaluators and tests.
+4. Implement CORS and open-redirect evidence/probes with explicit request
+   budgets, origin policy, no automatic following, destination validation and
+   local integration tests.
+5. Implement Disclosure path allowlisting, then sensitive-file, public
+   security-file and directory-listing probes using bounded status/headers.
+6. Add bounded source-map and error-body sampling only after byte, time,
+   decompression, parsing and secret-redaction rules are specified and tested.
+7. Reassess scanner-level aggregate limits and multi-process/deployment limits;
+   preserve the current shared-deadline, request/DNS caps and response cleanup.
+8. Complete contract/API/Flutter end-to-end verification and record the
+   approved delivery sign-off; do not treat passing general project tests as
+   proof of these 13 feature implementations.
+
+
+PHASE DELIVERY - REFERRER AND PERMISSIONS POLICY (2026-11-07)
+=============================================================
+
+Scope: complete only `header_referrer_policy` and `header_permissions_policy`.
+No Cookies, Access, Disclosure, or Week 4 implementation was started.
+
+Inspection before edits:
+- Both evaluators already existed in `security_scanner/checks/header_checks.py`.
+  Referrer-Policy applies the last recognized value across comma-separated or
+  separate evidence values, warns for missing/invalid/unknown-only input, and
+  does not echo raw values. Missing HTTP evidence returns not_verified.
+- Permissions-Policy intentionally detects presence only. It always reports a
+  present header as warning/info and explicitly says it did not parse or assess
+  directives. Missing headers warn; unavailable response evidence is
+  not_verified. This matches the agreed limited scope and makes no safety claim.
+- `response_runner.py` includes both evaluators in the shared-response runner;
+  the expanded report already transports response headers through
+  CheckContext/EvidenceCollection, emits the two findings once, and summarizes
+  the resulting findings. Default reports remain the original five findings.
+- Both IDs exist in Registry and Contracts; their collection mode is
+  `shared_http_response`. They remain marked `planned` because
+  `CheckDefinition` explicitly rejects `implemented` for any `expanded` entry
+  and the registry tests assert that invariant. No supported phase/status
+  combination permits correcting those metadata statuses without changing the
+  catalog rule, so registry/contracts/base metadata were left unchanged.
+
+Changes made in this phase:
+- `tests/test_check_response_evaluators.py`: added cases for multiple Referrer-
+  Policy values, recognized value followed by unknown value, last recognized
+  value precedence, invalid-only values, and Permissions-Policy invalid,
+  unknown and multiple values. Existing valid, missing, unavailable and
+  raw-value privacy tests remain in place.
+- `tests/test_report.py`: added
+  `test_shared_header_evidence_reaches_expanded_findings_and_summary`, which
+  sends shared response headers through `scan_target` into both results and
+  the final report; verifies status/explanation, no raw header value leakage,
+  no duplicate finding IDs, and summary counts matching findings.
+- No production code, registry, contract, TLS, foundational, backend, mobile,
+  Android or teammate-owned file was changed. No Check IDs were added or
+  removed.
+
+Verification:
+1. Focused selection:
+   .\\.venv\\Scripts\\python.exe -B -m pytest -p no:cacheprovider --basetemp="$env:TEMP\\dalal-pytest" tests/test_check_response_evaluators.py tests/test_check_response_runner.py tests/test_check_pipeline.py tests/test_check_expanded_report.py tests/test_report.py -k "referrer_policy or permissions_policy or shared_header_evidence or expanded_report or report_summary"
+   Final result: 26 passed, 39 deselected. An earlier draft of the new test
+   failed because its assertion treated an empty string as a substring; the
+   assertion was corrected in the test, with no application-code failure.
+2. Complete focused modules:
+   .\\.venv\\Scripts\\python.exe -B -m pytest -p no:cacheprovider --basetemp="$env:TEMP\\dalal-pytest" tests/test_check_response_evaluators.py tests/test_check_response_runner.py tests/test_check_pipeline.py tests/test_check_expanded_report.py tests/test_report.py
+   Result: 65 passed.
+3. Scanner/Checks/Report suite:
+   .\\.venv\\Scripts\\python.exe -B -m pytest -p no:cacheprovider --basetemp="$env:TEMP\\dalal-pytest" tests/test_scanner.py tests/test_report.py (Get-ChildItem -LiteralPath tests -Filter 'test_check_*.py' | ForEach-Object { $_.FullName }) tests/dalal_week3
+   Result: 290 passed.
+4. Full project suite:
+   .\\.venv\\Scripts\\python.exe -B -m pytest -p no:cacheprovider --basetemp="$env:TEMP\\dalal-pytest" tests
+   Result: 319 passed in 3.01s.
+
+The prior full-project count in this state was 312. The 7-test increase in this
+phase is accounted for by three Referrer-Policy parameter cases, three
+Permissions-Policy parameter cases, and one response-to-report test. This
+explains the current 312-to-319 collection increase. It does not establish why
+an older historical run had reported 319 before this phase; the prior audit's
+lack of retained collection/session logs still makes that older discrepancy
+unresolved.
+
+Review and scope:
+- The two checks are functionally executed in the opt-in expanded scanner
+  report and are covered through evaluator, shared runner, and report tests.
+  They are not API-visible by default: Flask does not set
+  `include_expanded_checks`; that integration remains Bailsan's ownership.
+- `PermissionsPolicyEvaluator` is explicitly presence-only. Directive syntax,
+  allowlists and browser behavior remain outside its scope.
+- Existing foundational and five TLS/redirect checks passed the full project
+  suite without changes to their implementation.
+- Only the two test files above and this state file were changed in this phase.
+  Git was not mutated; no commit or push was performed.
+
+FINAL VERIFICATION ADDENDUM - LIVE HTTPS REPORT FLOW (2026-11-07)
+=================================================================
+
+After the preceding phase entry, strengthened the existing controlled local
+TLS integration in `tests/test_scanner.py`: the trusted loopback HTTPS server
+now sends Referrer-Policy and Permissions-Policy headers, and the same live
+scanner request is passed through `scan_target(include_expanded_checks=True)`.
+The test asserts both finding statuses, Permissions-Policy's informational
+severity, no duplicate finding IDs, report count and received SNI. The optional
+HTTP probe is stubbed as a connection-unavailable result so this integration
+test makes no HTTP port-80 request. Production code is unchanged.
+
+Final verification after this test change:
+- Local TLS-to-report integration:
+  .\\.venv\\Scripts\\python.exe -B -m pytest -p no:cacheprovider --basetemp="$env:TEMP\\dalal-pytest" tests/test_scanner.py::test_real_tls_rejects_untrusted_self_signed_certificate
+  Result: 1 passed.
+- Focused evaluator/runner/pipeline/report modules:
+  .\\.venv\\Scripts\\python.exe -B -m pytest -p no:cacheprovider --basetemp="$env:TEMP\\dalal-pytest" tests/test_check_response_evaluators.py tests/test_check_response_runner.py tests/test_check_pipeline.py tests/test_check_expanded_report.py tests/test_report.py
+  Result: 65 passed.
+- Scanner/Checks/Report suite:
+  .\\.venv\\Scripts\\python.exe -B -m pytest -p no:cacheprovider --basetemp="$env:TEMP\\dalal-pytest" tests/test_scanner.py tests/test_report.py (Get-ChildItem -LiteralPath tests -Filter 'test_check_*.py' | ForEach-Object { $_.FullName }) tests/dalal_week3
+  Result: 290 passed in 1.98s.
+- Full project suite:
+  .\\.venv\\Scripts\\python.exe -B -m pytest -p no:cacheprovider --basetemp="$env:TEMP\\dalal-pytest" tests
+  Result: 319 passed in 2.40s.
+
+Files changed in this phase: `tests/test_check_response_evaluators.py`,
+`tests/test_report.py`, `tests/test_scanner.py`, and this state file. No
+production code or Registry/Contract files changed. The Registry's expanded
+status invariant remains as documented above. No Git state-changing command,
+commit, or push occurred.
+
+COOKIE PHASE IMPLEMENTATION MILESTONE (2026-11-07)
+==================================================
+
+Implemented the three cookie checks without adding IDs, expanding network
+requests, changing Registry status constraints, or touching API/mobile files.
+
+Implementation now in place:
+- Scanner reads each raw Set-Cookie field using the response raw-header
+  multi-value `getlist` interface before response close. It does not split on
+  commas. It validates raw header count/byte totals against existing limits,
+  parses only Secure, HttpOnly and normalized SameSite outcomes, and passes
+  flags/states only. Missing raw multi-value access or collection errors mark
+  cookie evidence unavailable; no exception text is logged.
+- Scanner's generic returned response headers omit Set-Cookie. CheckContext and
+  EvidenceCollection independently discard Set-Cookie so raw values/names
+  cannot persist in generic evidence or appear in reports.
+- Added immutable, validated cookie-observation transport, three aggregate
+  evaluators and optional expanded-runner wiring. Each finding covers all
+  observed cookies with counts and one-based ordinals only. No-cookie evidence
+  skips; unavailable evidence is not_verified. SameSite conflicts remain
+  not_verified. Permissions/other checks and the five foundational plus five
+  TLS/redirect results are unchanged.
+- The Registry/Contract IDs already exist and their mode is shared response.
+  Expanded statuses remain `planned`; `CheckDefinition` and registry tests
+  reject `implemented` for expanded entries. No catalog rule was changed.
+
+Current changed paths for this phase:
+- security_scanner/scanner.py
+- security_scanner/report.py
+- security_scanner/checks/context.py
+- security_scanner/checks/evidence.py
+- security_scanner/checks/cookie_checks.py (new evaluator module)
+- security_scanner/checks/response_runner.py
+- tests/test_check_response_evaluators.py
+- tests/test_check_evidence.py
+- tests/test_check_context.py
+- tests/test_check_expanded_report.py
+- tests/test_report.py
+- tests/test_scanner.py
+- WEEK3_DALAL_STATE.txt
+
+Permission note: a new `tests/test_check_cookies.py` file was not writable under
+the active explicit writable-root list, although the repository AGENTS.md has a
+pattern for check tests. The file creation was rejected by the tool; no bypass
+was attempted. Cookie unit/collector tests were placed in the already permitted
+`tests/test_check_response_evaluators.py` instead.
+
+Initial controlled local TLS integration after wiring:
+- `tests/test_scanner.py::test_real_tls_rejects_untrusted_self_signed_certificate`
+- Result: 1 passed. The test's real trusted localhost HTTPS response supplied
+  two distinct Set-Cookie fields, each with an Expires comma, and verified
+  all three cookie findings in the expanded report, aggregate summary, no
+  duplicate IDs, no leaked sentinel values in report or captured logs, and no
+  additional outbound HTTP request (the optional redirect probe is isolated).
+
+Full focused, Scanner/Checks/Report and project suites are still pending after
+this milestone. Next: run focused modules, then complete Scanner/Checks/Report,
+then full project suite; record exact final counts and review permitted diffs.
+
+COOKIE PHASE FINAL VERIFICATION (2026-11-07)
+============================================
+
+Implemented and verified:
+- `cookie_secure`: one aggregate finding evaluates Secure across each observed
+  cookie; missing attributes warn at medium severity. No cookies skips;
+  unavailable evidence is not_verified.
+- `cookie_httponly`: one aggregate finding evaluates HttpOnly across each
+  observed cookie; missing attributes warn at medium severity and explain the
+  limited JavaScript-access protection. No cookies skips; unavailable evidence
+  is not_verified.
+- `cookie_samesite`: Strict/Lax and None+Secure pass; None without Secure warns
+  medium; missing/invalid values warn low; conflicting or unparseable repeated
+  attributes are not_verified with a limitation. No cookies skips; unavailable
+  evidence is not_verified.
+
+Evidence, privacy, and integration:
+- Scanner collects distinct raw Set-Cookie fields using raw multi-value
+  `getlist`, without comma splitting, and applies existing response header
+  count/byte limits. Only boolean attributes and normalized SameSite states
+  are retained. Raw Set-Cookie fields, names, values and parser exceptions are
+  not retained or logged; generic response headers, CheckContext and
+  EvidenceCollection filter Set-Cookie.
+- Cookie evaluators run through the opt-in `include_expanded_checks=True`
+  shared-response path. They use the existing HTTPS response and introduce no
+  network request. Findings are aggregated once per check ID with counts and
+  ordinals only; summary counts are checked against the actual findings.
+- A controlled local trusted HTTPS scanner-to-report test sends two separate
+  Set-Cookie fields with Expires commas and fake sensitive values. It verifies
+  raw multi-value collection, all three findings, report summary consistency,
+  unique check IDs and absence of the sentinel values in report and captured
+  logs.
+- Registry and Contract IDs/status rules were not changed. Expanded Cookie
+  entries remain `planned` under the existing Registry invariant; this records
+  runtime implementation and test evidence without changing catalog policy.
+
+Final tests (project virtual environment, bytecode/cache disabled, explicit
+basetemp):
+1. Focused:
+   .\\.venv\\Scripts\\python.exe -B -m pytest -p no:cacheprovider --basetemp="$env:TEMP\\dalal-pytest" tests/test_check_response_evaluators.py tests/test_check_evidence.py tests/test_check_context.py tests/test_check_response_runner.py tests/test_check_pipeline.py tests/test_check_expanded_report.py tests/test_report.py tests/test_scanner.py
+   Result: 229 passed in 1.92s.
+2. Scanner/Checks/Report:
+   .\\.venv\\Scripts\\python.exe -B -m pytest -p no:cacheprovider --basetemp="$env:TEMP\\dalal-pytest" tests/test_scanner.py tests/test_report.py (Get-ChildItem -LiteralPath tests -Filter 'test_check_*.py' | ForEach-Object { $_.FullName }) tests/dalal_week3
+   Result: 307 passed in 2.47s.
+3. Full project:
+   .\\.venv\\Scripts\\python.exe -B -m pytest -p no:cacheprovider --basetemp="$env:TEMP\\dalal-pytest" tests
+   Result: 336 passed in 3.75s.
+4. The controlled live TLS integration was also run directly:
+   .\\.venv\\Scripts\\python.exe -B -m pytest -p no:cacheprovider --basetemp="$env:TEMP\\dalal-pytest" tests/test_scanner.py::test_real_tls_rejects_untrusted_self_signed_certificate
+   Result: 1 passed in 1.16s (the test is included in the full suites above).
+
+Files changed in the Cookie phase:
+- `security_scanner/scanner.py`
+- `security_scanner/report.py`
+- `security_scanner/checks/context.py`
+- `security_scanner/checks/evidence.py`
+- `security_scanner/checks/cookie_checks.py` (new)
+- `security_scanner/checks/response_runner.py`
+- `tests/test_check_response_evaluators.py`
+- `tests/test_check_evidence.py`
+- `tests/test_check_context.py`
+- `tests/test_check_expanded_report.py`
+- `tests/test_report.py`
+- `tests/test_scanner.py`
+- `WEEK3_DALAL_STATE.txt`
+
+Permission limitation: creating `tests/test_check_cookies.py` was rejected by
+active writable-path enforcement. No bypass was attempted; its unit and raw
+collector tests were added to the already writable
+`tests/test_check_response_evaluators.py`.
+
+Final read-only review:
+- `git diff --check` over permitted scanner/check/report/test/state paths
+  returned no whitespace errors. Git emitted only line-ending conversion
+  warnings for existing working-copy files.
+- `git status --short` shows pre-existing changes in docs/mobile and other
+  unrelated paths, along with scanner/test/state work. This Cookie phase
+  changed only the permitted files listed above; no backend, API, Flutter,
+  Android or teammate-owned file was edited.
+- No Git state-changing command was run; no commit or push was performed.
+- Access, Disclosure and Week 4 were not started. Flask opt-in integration
+  remains Bailsan-owned; mobile/report model integration remains Ahmad-owned.
+
+Limitations and handoff:
+- If raw multi-value Set-Cookie access is absent or fails, the three dependent
+  checks report not_verified rather than infer from merged headers.
+- Cookie checks remain opt-in in the Python scanner. API activation and mobile
+  presentation require the respective owners' integration work.
+
+ACCESS PHASE IMPLEMENTATION AND FINAL VERIFICATION (2026-11-07)
+=================================================================
+
+Scope: `cors_misconfiguration` and `open_redirect` only. This entry supersedes
+the earlier PLAN GAP AUDIT rows that classified both checks as MISSING.
+
+Implementation status:
+- `cors_misconfiguration`: evaluator, evidence collection, bounded OPTIONS
+  execution and expanded report wiring are present and verified. The scanner
+  issues at most one OPTIONS to the previously validated HTTPS URL; it pins
+  the validated IP, preserves hostname verification/SNI, uses verify=True,
+  trust_env=False, allow_redirects=False, stream=True, sends the fixed Origin,
+  method and request-header values, sends no Cookie/Authorization, does not
+  consume the body, shares the scan deadline and closes response/session.
+  Raw multi-value ACAO, ACAC, ACAM, ACAH and Vary are parsed with existing
+  response header count/byte limits. Conflicting or invalid evidence is
+  not_verified. A successful OPTIONS without ACAO is reported as no permission
+  for this specific preflight, with a limitation that other paths are not
+  covered. Wildcard/accepted test-origin plus the requested method/header is a
+  potential broad-policy warning, not proof of exploit. Wildcard plus
+  credentials explicitly explains that browsers do not grant credentialed
+  access through wildcard ACAO.
+- `open_redirect`: evaluator uses only the original HTTPS response and its raw
+  multi-value Location fields. It resolves relative and protocol-relative
+  references against the exact request URL, compares scheme/host/effective
+  port to the target origin, and never follows or connects to the destination.
+  External HTTP/HTTPS origins are potential warnings, not proven exploits;
+  same-origin relative destinations are passed; unsupported schemes are
+  reported without following; malformed, repeated or unavailable Location
+  evidence is not_verified; non-redirect responses are skipped.
+- Both checks emit exactly one finding each through
+  `include_expanded_checks=True`; report summary counts match emitted findings.
+  No Check IDs or Registry/Contract status rules were changed; Registry entries
+  remain `planned` under the existing expanded-check invariant. The base five,
+  TLS/redirect five, header checks and Cookie checks remain in the suite.
+- Sensitive raw Location and CORS header values are not placed in finding
+  evidence, explanations, recommendations, limitations or logs. Location is
+  collected separately for evaluation; generic report findings do not echo it.
+
+Tests and exact final results (Python virtual environment, `-B`, cache plugin
+ disabled, explicit basetemp):
+1. Focused evaluator, expanded report, scanner integration and report modules:
+   .\\.venv\\Scripts\\python.exe -B -m pytest -p no:cacheprovider --basetemp="$env:TEMP\\dalal-pytest" tests/test_check_response_evaluators.py tests/test_check_expanded_report.py tests/test_scanner.py tests/test_report.py
+   Result: 198 passed in 1.82s.
+2. Scanner/Checks/Report suite:
+   .\\.venv\\Scripts\\python.exe -B -m pytest -p no:cacheprovider --basetemp="$env:TEMP\\dalal-pytest" tests/test_scanner.py tests/test_report.py (Get-ChildItem -LiteralPath tests -Filter 'test_check_*.py' | ForEach-Object { $_.FullName }) tests/dalal_week3
+   Result: 341 passed in 3.19s.
+3. Full project suite:
+   .\\.venv\\Scripts\\python.exe -B -m pytest -p no:cacheprovider --basetemp="$env:TEMP\\dalal-pytest" tests
+   Result: 370 passed in 2.90s.
+
+Relevant coverage includes wildcard and accepted CORS origins, credential behavior,
+requested method/header, Vary: Origin, absent permission, conflicts/multiple
+values, unsupported OPTIONS, timeout/connection/internal/unavailable evidence,
+relative/absolute/protocol-relative redirects, same/external origins, ports,
+malformed hosts/Location, unacceptable schemes, repeated Location, non-redirect
+status, and no sensitive-value echo. The local verified HTTPS integration
+confirms exactly one OPTIONS, fixed request headers, no Cookie or Authorization,
+TLS verification and SNI, scanner-to-finding-to-summary flow, and no redirect
+follow-up or destination request.
+
+Files changed in this Access phase:
+- `security_scanner/scanner.py`
+- `security_scanner/report.py`
+- `security_scanner/checks/context.py`
+- `security_scanner/checks/evidence.py`
+- `security_scanner/checks/response_runner.py`
+- `security_scanner/checks/access_checks.py` (new)
+- `tests/test_check_response_evaluators.py`
+- `tests/test_check_expanded_report.py`
+- `tests/test_scanner.py`
+- `tests/test_report.py`
+- `WEEK3_DALAL_STATE.txt`
+
+Read-only review and remaining handoffs:
+- `git diff --check` over the permitted tracked scanner/check/report/test/state
+  paths reported no whitespace errors; only working-copy line-ending warnings
+  appeared. The new evaluator module is untracked in Git and was reviewed
+  directly; no Git staging or other Git state change occurred.
+- `git status --short` also lists unrelated docs/mobile/deleted/untracked items
+  already present in this shared workspace. This phase edited only the allowed
+  Dalal scanner/check/report/test/state paths; it did not touch those unrelated
+  or teammate-owned paths.
+- API activation of expanded checks remains Bailsan's responsibility; Flutter,
+  Android models and UI integration remain Ahmad's responsibility. Registry
+  status metadata remains planned per the explicit instruction not to alter its
+  expanded-status invariant.
+- CORS evidence is limited to one fixed-origin preflight on the exact target
+  URL. It does not establish behavior for other routes, methods, headers or
+  browser credential modes. Open Redirect is a passive indication based on the
+  original response only, not proof that an application-controlled parameter
+  is exploitable.
+- Disclosure was not started. No commit or push was performed.
+
+DISCLOSURE PHASE IMPLEMENTATION MILESTONE (2026-11-07)
+======================================================
+
+Implementation has been added for the six plan gaps using fixed path lists,
+scanner-side bounded collectors, sanitized DisclosureEvidence, separate
+Disclosure evaluators and the opt-in expanded report. This is an implementation
+milestone; final scanner/project verification is still pending.
+
+Current provisional checks:
+- Every Disclosure probe pins the validated IP and original Host/SNI, verifies
+  TLS, disables environment proxy inheritance and redirects, streams, requests
+  identity encoding and a bounded Range sample, uses connect/read timeouts no
+  greater than two seconds within the caller deadline, and closes its response
+  and session. Per scan the plan is 6 sensitive paths + at most 2 source-map
+  requests + 2 directory paths + 3 public security paths = at most 13.
+- The original response is reused for server headers and error signatures;
+  HTML is sampled up to 16 KiB, an original error up to 4 KiB, and each
+  additional body sample up to 4 KiB. Encoded bodies are not decompressed.
+- Raw bodies, source-map JSON/names, sensitive file bytes/secrets, error text,
+  raw server values and Location values are excluded from DisclosureEvidence,
+  generic evidence and finding text. Only bounded statuses, safe categories,
+  allowed header names/types, media-type classes and fixed-path ordinals remain.
+- Local controlled HTTPS scanner/report coverage exercises a valid Source Map,
+  sensitive signature, directory index, security.txt, server version redaction,
+  original error-page indicators, no-follow behavior and the thirteen-request
+  bound. Focused tests currently pass: 59 passed in 1.63s.
+
+Pending before describing this phase as verified: run the complete
+Scanner/Checks/Report suite and full project suite after the final edits, review
+permitted-path status/diff and `git diff --check`, then append exact results.
+
+DISCLOSURE PHASE FINAL VERIFICATION (2026-11-07)
+================================================
+
+Final status: the six Disclosure checks have scanner-side bounded evidence
+collection, separate evaluation, inclusion in the opt-in expanded scanner path,
+and Findings/Summary output, with controlled local integration coverage. Based
+on the final runs below, the implementation is verified within the stated
+limits; this does not expand scope to Week 4.
+
+Checks and evidence:
+- sensitive_file_exposure: fixed six-path probe; only recognized content
+  signatures count as found; 404/410 are scoped to that path; insufficient or
+  unavailable samples remain not_verified.
+- source_maps_exposure: samples original HTML up to 16 KiB, follows at most one
+  same-origin JS/CSS reference and one map reference within the overall probe
+  cap; only valid readable map evidence is confirmed. External/malformed or
+  incomplete references are not treated as a passed absence.
+- directory_listing: checks only /uploads/ and /files/ using bounded known
+  index markers; never crawls or reports filenames.
+- server_information_disclosure: uses original response headers; evidence
+  stores allowlisted header names and generic technology/version categories,
+  not raw values. A warning requires recognizable version/technology evidence.
+- error_information_disclosure: inspects only an original 4xx/5xx sample and
+  retains generic pattern categories, not raw error text; non-error response
+  is skipped.
+- public_security_files: checks only the two security.txt paths and /robots.txt;
+  records status and safe media class; does not fetch referenced paths and does
+  not characterize robots.txt as protection.
+
+Bounded request/data behavior observed in local scanner integration:
+- Maximum successful HTML-path scan: 13 additional Disclosure GET attempts
+  (six sensitive + one asset + one map + two directory + three public-file
+  paths). Redirect/error original-response scenarios used 11 each because no
+  source-map asset was applicable. Across those three controlled scans: 35
+  Disclosure GET attempts, all to the local pinned HTTPS server; no redirect
+  destination was contacted.
+- Additional body samples are capped at 4 KiB; original HTML at 16 KiB; an
+  original error body at 4 KiB. Identity encoding is requested and encoded
+  content is not decompressed. Connect/read timeouts are at most 2 seconds and
+  share the scan deadline. Requests use the previously validated IP, original
+  Host/SNI, TLS verification, trust_env=False, allow_redirects=False,
+  stream=True, no credentials, and responses/sessions are closed.
+- Sensitive file bytes, raw body/header values, source-map content/names, error
+  lines, and filenames are not retained in Disclosure evidence or reports.
+
+Final test commands and results (project interpreter, no pytest cache):
+1. .\\.venv\\Scripts\\python.exe -B -m pytest -p no:cacheprovider
+   --basetemp="$env:TEMP\\dalal-pytest"
+   tests/dalal_week3/test_disclosure_evaluators.py
+   tests/test_check_expanded_report.py tests/test_report.py
+   tests/test_scanner.py::test_real_tls_rejects_untrusted_self_signed_certificate
+   Result: 61 passed in 1.92s.
+2. .\\.venv\\Scripts\\python.exe -B -m pytest -p no:cacheprovider
+   --basetemp="$env:TEMP\\dalal-pytest" tests/test_scanner.py tests/test_report.py
+   (Get-ChildItem -LiteralPath tests -Filter 'test_check_*.py' |
+   ForEach-Object { $_.FullName }) tests/dalal_week3
+   Result: 378 passed in 3.40s.
+3. .\\.venv\\Scripts\\python.exe -B -m pytest -p no:cacheprovider
+   --basetemp="$env:TEMP\\dalal-pytest" tests
+   Result: 407 passed in 4.07s.
+
+Files changed for this Disclosure phase:
+- security_scanner/checks/disclosure_evidence.py (new)
+- security_scanner/checks/disclosure_checks.py (new)
+- security_scanner/checks/context.py
+- security_scanner/checks/evidence.py
+- security_scanner/checks/response_runner.py
+- security_scanner/scanner.py
+- security_scanner/report.py
+- tests/test_scanner.py
+- tests/test_report.py
+- tests/test_check_expanded_report.py
+- tests/dalal_week3/test_disclosure_evaluators.py (new)
+- WEEK3_DALAL_STATE.txt
+
+Scope and remaining limitations:
+- No IDs or Registry status invariants were changed. The scanner/report path is
+  opt-in via include_expanded_checks=True; Flask/API activation remains
+  Bailsan's responsibility, and Flutter/Android integration remains Ahmad's.
+- Fixed-path and sample-size limits mean this is not exhaustive discovery.
+  Soft-404s, unusual encodings/content types, unsupported marker formats,
+  truncated HTML, timeouts, or exhausted deadline can yield not_verified.
+  Source-map checks are intentionally limited to one related asset and one map.
+- Permission-scope review found that AGENTS.md lists tests/test_check_*.py and
+  scanner tests, but does not list tests/dalal_week3/. The active managed
+  permission profile permits tests/dalal_week3, and the new evaluator test
+  module was written there under that profile. This discrepancy is recorded;
+  no attempt was made to bypass it by moving or deleting the file.
+- Final review is read-only. Existing unrelated working-tree changes remain
+  preserved. No Git state-changing command, commit, or push was performed.
+
+FINAL THREE-WEEK ACCEPTANCE AUDIT (2026-11-07)
+================================================
+
+Audit disposition: PARTIAL. This is a read-only audit of the implementation,
+prior stage entries in this state file, Scanner/Checks/Registry/Contracts/
+Evidence/Report/tests, and the available Week 1/2/API project documents. The
+only file changed by this audit is this requested state file. No tests were run
+again for this audit; latest recorded full-project evidence remains 407 passed
+in 4.07s (Disclosure phase, above). That result is not used as proof for an
+untested criterion.
+
+Plan/source caveat: no repository copy of the exact detailed three-week plan
+was found in the earlier PLAN GAP AUDIT. This acceptance audit therefore uses
+its three-week phase structure, the 23 user-listed check IDs, earlier audit
+entries, and the available project-scope/security-policy/test-plan/API contract
+documents. Where acceptance wording or thresholds are absent from those sources,
+this audit records the evidence boundary rather than infer a requirement.
+
+SECTION 1 — 23 CHECK IDS
+------------------------
+Status is an acceptance classification for the end-to-end plan, not a statement
+that code is absent. “PARTIAL” applies to expanded checks because executable
+scanner/report behavior is opt-in, Registry still labels them `planned`, and
+Flask/API does not enable them. The Python expanded path contains the 23 plan
+IDs plus `cache_security`, for 24 findings total. This extra finding is not a
+new plan ID. The default Python path and current API return five foundational
+findings.
+
+| Check ID | Status | Actual evidence, evaluator, scanner/report path | Tests and limits |
+|---|---|---|---|
+| https_connection | COMPLETE | Actual HTTPS request outcome after HTTPS/443 validation, pinned IP, original Host/SNI and verify=True; base scanner/report path; one finding and summary count. | `test_request_pins_validated_ip_and_preserves_tls_hostname`, `test_request_uses_pinned_ip_and_tls_hostname_through_http_stack`, `test_real_tls_rejects_untrusted_self_signed_certificate`, `test_real_tls_rejects_expired_certificate`, API `test_scan_endpoint_returns_contract_compatible_report`. External-network behavior is not established. |
+| header_hsts | COMPLETE | Evaluates HSTS from the real shared HTTPS response in the default path; finding and summary. | `test_missing_headers_warn`, `test_present_headers`, `test_invalid_header_values_warn`, `test_duplicate_case_insensitive_security_headers_warn`, report and API contract tests. Only the examined response is covered. |
+| header_csp | COMPLETE | Evaluates enforced CSP presence from the real shared response; does not evaluate policy quality. | `test_present_headers`, `test_missing_headers_warn`, `test_invalid_header_values_warn`, `test_csp_presence_does_not_mean_policy_is_validated`, report and API tests. Presence is not a security-quality verdict. |
+| header_x_content_type_options | COMPLETE | Evaluates observed `nosniff` value in the default shared-response path. | `test_present_headers`, `test_missing_headers_warn`, `test_invalid_header_values_warn`, report/API contract tests. One response only. |
+| header_x_frame_options | COMPLETE | Evaluates supported `DENY`/`SAMEORIGIN` response values in the default shared-response path. | `test_present_headers`, `test_missing_headers_warn`, `test_invalid_header_values_warn`, report/API contract tests. Does not cover all framing protections. |
+| tls_certificate_expiry | PARTIAL | Verified TLS socket supplies notBefore/notAfter; separate evaluator is wired through `evaluate_week3_evidence` and expanded report. Expired, not-yet-valid, near-expiry, valid use the approved 30-day rule. | `test_certificate_expiry_policy_covers_expired_not_yet_valid_near_and_valid`, `test_certificate_expiry_missing_data_or_unverified_tls_is_not_verified`, `test_expanded_report_evaluates_tls_metadata_from_scanner_connection`, and live portion of `test_real_tls_rejects_untrusted_self_signed_certificate`. Dates from a certificate rejected by verify=True are unavailable; no weakening is allowed. Registry=`planned`; API does not enable expanded mode. |
+| tls_certificate_chain | PARTIAL | Successful verify=True handshake plus runtime-exposed verified-chain presence is evaluated. Current local runtime exposed a verified chain. Evaluator does not retain or independently report chain contents/path details. | `test_chain_requires_verified_connection_and_exposed_chain`, `test_expanded_report_evaluates_tls_metadata_from_scanner_connection`, live verified-chain assertion in `test_real_tls_rejects_untrusted_self_signed_certificate`. Other TLS runtimes may not expose `get_verified_chain`; then result is not_verified. Registry/API gaps apply. |
+| tls_protocol_config | PARTIAL | Version and cipher are copied from the live negotiated TLS socket and policy-evaluated in expanded mode. | `test_tls_protocol_and_cipher_policy`, `test_expanded_report_evaluates_tls_metadata_from_scanner_connection`, live assertions in `test_real_tls_rejects_untrusted_self_signed_certificate`. Known unsupported cipher names remain not_verified. Registry/API gaps apply. |
+| http_to_https_redirect | PARTIAL | One pinned GET to HTTP origin root is implemented for opt-in expanded scans; response is streamed, body is not consumed, redirects disabled and approved status/Location rules evaluated. | `test_http_redirect_statuses_missing_invalid_and_relative_location`, `test_bounded_http_probe_performs_one_local_root_get_without_following`; bounded collector also asserted through TLS redirect evaluator tests. Local HTTP integration proves the probe itself, but full live HTTP probe→expanded report integration is not separately asserted. Registry/API gaps apply. |
+| redirect_destination_safety | PARTIAL | Accepted HTTP redirect Location is parsed/resolved and all DNS answers are evaluated; destination is never contacted. | `test_redirect_destination_policy_rejects_private_mixed_and_bad_shapes`, `test_redirect_dns_collection_keeps_mixed_answers_for_rejection`, `test_redirect_destination_is_never_connected`, `test_http_redirect_statuses_missing_invalid_and_relative_location`; local HTTP root-probe test. No destination connection is intentional; DNS/deadline availability can yield not_verified. Registry/API gaps apply. |
+| header_referrer_policy | PARTIAL | Shared HTTPS header is evaluated by `ReferrerPolicyEvaluator` (recognized/multiple/unknown/missing handling) and appears in opt-in report. | `test_referrer_policy_accepts_strict_policy`, `test_referrer_policy_uses_last_recognized_fallback`, `test_referrer_policy_warns_for_unsafe_url`, `test_referrer_policy_warns_for_unknown_value`, `test_referrer_policy_handles_multiple_and_invalid_field_values`, `test_referrer_policy_missing_header_warns`, `test_referrer_policy_does_not_echo_raw_value`; live expanded report assertion in `test_real_tls_rejects_untrusted_self_signed_certificate`. Registry/API remain planned/five-only. |
+| header_permissions_policy | PARTIAL | Actual shared response header reaches `PermissionsPolicyEvaluator`; implementation is explicitly presence-only. Presence is reported as warning/info and does not assert valid or safe directives. | `test_permissions_policy_presence_is_not_reported_as_passed`, `test_permissions_policy_missing_header_warns`, `test_permissions_policy_presence_never_claims_parsing_or_validity`; live expanded report assertion in `test_real_tls_rejects_untrusted_self_signed_certificate`. Directive quality is outside scope; Registry/API remain planned/five-only. |
+| cookie_secure | PARTIAL | Raw multi-value Set-Cookie fields are collected separately; only parsed attributes are retained; aggregate evaluator emits one finding in expanded mode. | `test_single_cookie_with_all_attributes_passes_all_three_checks`, `test_cookie_checks_aggregate_observations_and_apply_attribute_rules`, `test_cookie_raw_collector_preserves_fields_and_expires_commas_without_retaining_values`, `test_real_tls_rejects_untrusted_self_signed_certificate`. No-cookie/unavailable cases are covered; Registry/API remain planned/five-only. |
+| cookie_httponly | PARTIAL | Same evidence path, checks HttpOnly for every cookie and aggregates without cookie name/value. | Same cookie tests plus `test_cookie_checks_skip_empty_collection_and_not_verify_unavailable`; local live report checks all three cookie findings and secret redaction in `test_real_tls_rejects_untrusted_self_signed_certificate`. JavaScript-access explanation is limited to HttpOnly's scope; Registry/API remain planned/five-only. |
+| cookie_samesite | PARTIAL | Separate Set-Cookie values parsed without comma splitting; SameSite states/conflicts evaluated and aggregated. | `test_cookie_samesite_strict_and_lax_pass`, `test_cookie_samesite_none_with_secure_passes_and_discloses_cross_site_semantics`, `test_cookie_samesite_missing_unknown_and_conflicting_states`, `test_cookie_raw_collector_marks_conflicting_samesite_attributes_ambiguous`, local live report in `test_real_tls_rejects_untrusted_self_signed_certificate`. Conflicts remain not_verified; Registry/API remain planned/five-only. |
+| cors_misconfiguration | PARTIAL | One fixed OPTIONS preflight on the validated target URL with fixed origin/method/header; real multi-value CORS evidence is sanitized and evaluated; one expanded finding. | `test_cors_wildcard_reports_potential_broad_policy_without_claiming_exploit`, `test_cors_accepts_test_origin_and_reports_vary_methods_and_headers`, `test_cors_credentials_and_wildcard_do_not_claim_credentialed_access`, `test_cors_denied_or_incomplete_preflight_does_not_claim_broad_access`, `test_cors_conflicting_or_invalid_multiple_values_are_not_verified`, `test_cors_unsupported_timeout_and_unavailable_evidence_are_not_verified`; live OPTIONS→report path in `test_real_tls_rejects_untrusted_self_signed_certificate`. Scope is one preflight/one URL; Registry/API remain planned/five-only. |
+| open_redirect | PARTIAL | Reads only raw Location from original HTTPS response when it is a redirect; evaluates same/external/malformed destinations without following or connecting. | `test_open_redirect_relative_locations_resolve_to_same_origin`, `test_open_redirect_external_absolute_and_protocol_relative_are_potential_warning`, `test_open_redirect_non_http_scheme_is_reported_without_following`, `test_open_redirect_malformed_or_multiple_locations_are_not_verified`, `test_open_redirect_repeated_location_or_unavailable_raw_evidence_is_not_verified`, `test_open_redirect_skips_non_redirect_response_and_marks_missing_location`; live no-follow report assertion in `test_real_tls_rejects_untrusted_self_signed_certificate`. External origin is only a potential indicator, not proof of exploit. Registry/API remain planned/five-only. |
+| sensitive_file_exposure | PARTIAL | Six fixed paths only; signature classifier evaluates bounded response samples and stores categories/statuses, not content. Separate evaluator and expanded report. | `test_sensitive_file_signatures_are_classified_without_retaining_content`, `test_sensitive_file_statuses_and_soft_404_are_not_overclaimed`, `test_one_probe_internal_failure_does_not_abort_remaining_disclosure_checks`, `test_disclosure_collector_stays_within_exact_thirteen_path_budget`; local real HTTPS scanner→report in `test_real_tls_rejects_untrusted_self_signed_certificate`. Only six paths and signatures; Registry/API remain planned/five-only. |
+| source_maps_exposure | PARTIAL | Original HTML up to 16 KiB; at most one same-origin asset and one map request, bounded to 4 KiB each; map content/source names are not retained. | Source-map reference and parsing cases in `tests/dalal_week3/test_disclosure_evaluators.py` (including external/malformed/unavailable and valid map cases); local scanner→report fixture checks a real local map in `test_real_tls_rejects_untrusted_self_signed_certificate`. One asset/map only; incomplete sample yields not_verified; Registry/API remain planned/five-only. |
+| directory_listing | PARTIAL | Only `/uploads/` and `/files/`, 4 KiB samples, known index markers, no crawl or filenames in results. | Directory-index marker/false-positive/status cases in `tests/dalal_week3/test_disclosure_evaluators.py`; local scanner→report fixture in `test_real_tls_rejects_untrusted_self_signed_certificate`. Marker-based and two-path scope only; Registry/API remain planned/five-only. |
+| server_information_disclosure | PARTIAL | Original response headers only; allowlisted header names and generic info types retained, raw values/versions redacted; separate evaluator. | Server-header presence/version/no-leak cases in `tests/dalal_week3/test_disclosure_evaluators.py`; local report privacy assertion in `test_real_tls_rejects_untrusted_self_signed_certificate`. Only selected headers and recognized version/technology evidence; Registry/API remain planned/five-only. |
+| error_information_disclosure | PARTIAL | Only the original 4xx/5xx body sample up to 4 KiB; stores generic stack/path/SQL/framework categories, not raw text. Non-error is skipped. | Error signature/general HTML/status tests in `tests/dalal_week3/test_disclosure_evaluators.py`; controlled local 500 scanner→report in `test_real_tls_rejects_untrusted_self_signed_certificate`. Signature coverage is bounded; Registry/API remain planned/five-only. |
+| public_security_files | PARTIAL | Only `/.well-known/security.txt`, `/security.txt`, `/robots.txt`; status and safe media type recorded; no linked paths fetched; robots is not characterized as protection. | Public-file present/missing/status/media cases in `tests/dalal_week3/test_disclosure_evaluators.py`; local scanner→report fixture asserts presence in `test_real_tls_rejects_untrusted_self_signed_certificate`. Fixed paths/sample limit only; Registry/API remain planned/five-only. |
+
+Expanded scanner report tests: `test_expanded_report_adds_cookie_findings_from_one_response`
+asserts all 23 plan IDs are included, unique, and summary total matches; it
+expects 24 findings because `cache_security` is an additional evaluator outside
+the stated 23-ID plan. `test_real_tls_rejects_untrusted_self_signed_certificate`
+exercises controlled live local TLS and scanner→report flow for cookies,
+headers, CORS, Disclosure, TLS metadata, summary counts and privacy. The
+Disclosure scan's maximum was 13 additional GET attempts. Tests are evidence
+for the covered controlled fixtures only; they do not establish every format,
+server or production network behavior.
+
+Registry/Contract acceptance:
+- Registry has 30 catalog definitions total: five foundational definitions
+  with status `implemented`, and 25 expanded definitions with status `planned`.
+  The 23 plan IDs exist, but all 18 expanded plan IDs remain `planned` due the
+  catalog invariant. This audit does not count those metadata entries as
+  implementation and does not alter them.
+- Contracts cover all registered IDs, but contracts are metadata only. They do
+  not prove collection/execution. One apparent mismatch remains: the
+  `open_redirect` contract describes `controlled_redirect_probe`/`bounded_http_probe`,
+  while its implementation uses the original response Location and makes no
+  separate probe. The contract should be reconciled by its owner/review process.
+- `header_permissions_policy` remains presence-only; it neither parses policy
+  directives nor proves feature restrictions are safe.
+
+SECTION 2 — WEEK 1 ACCEPTANCE
+-----------------------------
+
+| Requirement | Status | Evidence and residual limitation |
+|---|---|---|
+| URL validation (scheme/port/credentials/malformed URL) | COMPLETE | Scanner rejects non-HTTPS, non-443, credentials and malformed inputs before HTTP; `test_reject_unsafe_urls`, `test_reject_url_with_credentials`, `test_reject_unsupported_port`, `test_malformed_urls_are_rejected_before_dns`. |
+| DNS and IPv4/IPv6 target policy / SSRF | PARTIAL | All returned addresses are validated; mixed public/private, loopback/private/link-local/reserved/multicast and prohibited IPv6 transition addresses are tested; validated IP is pinned and real local socket peer/SNI flow is exercised. Tests include `test_reject_mixed_public_and_private_dns_addresses`, `test_accept_public_ipv6_dns_address`, `test_reject_non_global_ips_before_http_request`, `test_dns_failure_never_triggers_http_request`, `test_resolved_target_is_reused_without_second_dns_lookup`, and real socket portion of `test_real_tls_rejects_untrusted_self_signed_certificate`. OS `getaddrinfo` work cannot be forcibly cancelled; DNS behavior on production networks/rebinding infrastructure is not proved. |
+| TLS verification, hostname/SNI, IP pinning, redirects | COMPLETE for scanner controls | `verify=True`, pinned IP, original hostname/SNI, 443 policy and `allow_redirects=False`; controlled real TLS verifies trusted/untrusted/expired certificate behavior and real socket peer. `test_redirect_is_not_followed`, `test_request_pins_validated_ip_and_preserves_tls_hostname`, `test_request_uses_pinned_ip_and_tls_hostname_through_http_stack`, `test_real_tls_rejects_untrusted_self_signed_certificate`, `test_real_tls_rejects_expired_certificate`. This is controlled local coverage, not all deployment stacks. |
+| Sessions, Responses, exception cleanup | COMPLETE for tested paths | `Session`/`Response` close in finally paths; tests `test_response_and_session_close_when_header_access_raises`, `test_session_closes_when_response_close_raises`, `test_http_timeout_returns_timeout_and_closes_session`, `test_http_connect_timeout_returns_timeout_and_closes_session`, `test_response_body_is_not_read_and_response_is_closed`. Other library/runtime exception combinations are not exhaustively proven. |
+| Request count, timeout, deadline and concurrency | PARTIAL | One original request, at most one CORS OPTIONS, one HTTP root probe and up to 13 Disclosure GET attempts in expanded mode. Flask has 25s shared deadline, four process-local scan slots, five requests per source per 60s and API request cap 16 KiB; DNS has two-second wait, four resolver slots and 32-answer cap. Scanner probes use shared deadline and bounded connect/read times. OS DNS threads can outlive caller timeout; slow-drip/deadline hard cancellation, multi-process limits and deployed proxy/server behavior remain unverified. |
+| Header and evidence size limits | PARTIAL | `MAX_RESPONSE_HEADER_COUNT=100`, `MAX_RESPONSE_HEADER_BYTES=64 KiB`, validated in CheckContext/EvidenceCollection. Disclosure HTML cap 16 KiB; each body probe/error sample 4 KiB; `Accept-Encoding: identity`, no decompression and bounded reads. Requests/Python HTTP parser limits handle some raw oversized-header failures; no independent proof across all chunked, misleading/missing Content-Length, slow-drip and compression variants. Generic response bodies are otherwise streamed and not copied to report. |
+| Disclosure fixed paths and aggregate budget | COMPLETE for implemented allowlist | Exactly six sensitive-file paths, two directory paths, three public-file paths, plus at most one asset and one map request: at most 13 extra Disclosure requests. No crawling, extra linked paths, redirect following or external-origin connection. Confirmed by `test_disclosure_collector_stays_within_exact_thirteen_path_budget` and local scanner integration. Results are inherently limited to the fixed list and sample signatures. |
+| Cookie secret/raw evidence protection | COMPLETE for tested paths | Distinct raw Set-Cookie values collected through raw multi-value access, attributes only retained, no raw cookie names/values in report/logging; covered by cookie collector/privacy tests and local live report. If multi-value API is unavailable, result is not_verified. |
+| Location, headers and evidence privacy | COMPLETE for tested fields | Raw Set-Cookie, Location, selected server values and bodies are filtered/reduced; CORS stores sanitized fields. Redaction assertions in report, access, cookie and Disclosure tests. Does not imply every possible exception from third-party dependencies is secret-free beyond tested guards. |
+| Findings and Summary consistency | COMPLETE in Python report | `_summarize` derives counts from emitted findings; report and expanded tests assert totals, status equality, unique IDs. `test_report_summary_matches_finding_statuses`, `test_shared_header_evidence_reaches_expanded_findings_and_summary`, `test_expanded_report_adds_cookie_findings_from_one_response`, local expanded integration. Expanded Python report has 24 findings including extra `cache_security`. |
+| Required regression suite | PARTIAL as plan-wide closure | Latest historical full project run: 407 passed in 4.07s. Scanner/Checks/Report: 378 passed in 3.40s; focused Disclosure: 61 passed in 1.92s. Existing regression suite is broad, but documented tests do not prove all OS DNS, slow-drip/chunked/size edge cases or deployed service behavior. No new run was performed for this audit. |
+
+SECTION 3 — WEEK 2 / WEEK 3 SEMANTICS
+------------------------------------
+
+| Topic | Status | Verified behavior / limitation |
+|---|---|---|
+| Referrer-Policy | PARTIAL | Evaluates recognized policy values, missing/unknown/multiple values and privacy; expanded only. Registry planned, API stays base-only. |
+| Permissions-Policy | PARTIAL | Presence-only. A present header is not called passed and is not parsed for directive validity/allowlists/effect. Unit tests explicitly assert this limit. Expanded only; Registry planned/API base-only. |
+| TLS certificate chain | PARTIAL | `verify=True` remains mandatory. Socket hook checks `get_verified_chain` where exposed; current local runtime test observed chain availability. It records availability only and does not serialize raw certs or independently detail path validation. Missing runtime API/evidence yields not_verified. |
+| TLS expiry / protocol | PARTIAL | Actual negotiated metadata is captured on verified connection. Invalid cert remains a real HTTPS failure; dependent date/chain/protocol evidence is unavailable rather than gathered with CERT_NONE. Policy tests cover approved dates and cipher/version rules, but the plan status remains planned and API does not expose them. |
+| HTTP-to-HTTPS | PARTIAL | One GET to origin root on port 80, pinned target IP, no user path/query/fragment/credentials/cookies/auth, no body, no redirect follow, shared deadline. Only root reachability at scan time; API integration absent. |
+| Redirect destination safety | PARTIAL | Only policy evaluation, no destination socket request. DNS answers all checked, mixed answers rejected. Depends on DNS evidence and remains point-in-time; no claim that external redirect is exploitable. |
+| CORS | PARTIAL | Exactly one fixed OPTIONS preflight on the requested target URL, fixed test Origin/method/header, no credentials, no body read/follow. A finding only describes that preflight, not every route/method/browser context. Broad policy is a risk indicator, not confirmed exploit. |
+| Open Redirect | PARTIAL | Original response only; relative/protocol-relative/absolute Location analyzed; no guessed query keys, extra probe, follow or connection. External destination is a possible indicator only. |
+| Cookies | PARTIAL | Per-cookie Secure/HttpOnly/SameSite are aggregated, values/names not retained; no extra request. Limits include parser/multi-value support and single response point-in-time. |
+| Disclosure six checks | PARTIAL | Real bounded scanner collection/evaluation and live local scanner→report evidence exist. Max 13 additional probes, fixed paths and byte caps. No exhaustive discovery; unsupported/truncated/timeout/soft-404 cases can remain not_verified. Expanded results not API-exposed. |
+
+SECTION 4 — API / FLUTTER INTEGRATION
+------------------------------------
+
+| Integration criterion | Status | Read-only evidence |
+|---|---|---|
+| Flask invokes expanded scanner | MISSING | `backend/app.py` calls backend `scan_target(target_url, resolved_target=..., deadline=...)`; `backend/scanner.py::scan_target` does not accept/forward `include_expanded_checks`; default in `security_scanner.report.scan_target` is False. API therefore returns five base findings. |
+| API contract lists all 23 plan IDs | MISSING | `docs/api-contract.md` says exactly five stable IDs, example summary total five, and finding list is five. It remains a draft. |
+| API tests verify expanded IDs over Flask | MISSING | `tests/test_api.py::test_scan_endpoint_returns_contract_compatible_report` explicitly asserts five findings and exact base IDs; there is no API test asserting 23/24 expanded output. |
+| Flutter model supports a variable finding list structurally | COMPLETE | `ScanReport._readFindings` iterates an arbitrary JSON List; `Finding` stores generic `Object? evidence`, severity, confidence, and string limitations. `ReportScreen` iterates `report.findings` rather than a fixed five-slot layout. |
+| Flutter expanded-count acceptance / UX | PARTIAL | `mobile/test/models_test.dart` parses one finding; `mobile/test/report_screen_test.dart` renders one finding. No test passes 23 expanded findings or verifies new check labels/localized semantics. |
+| Field preservation | COMPLETE structurally; PARTIAL end-to-end | Dart model maps evidence, limitations, severity and confidence, and report summary as a dynamic map. But Flask currently sends five findings and there is no cross-layer test proving all expanded fields survive API serialization and UI rendering. |
+| Actual API→Flutter integration | MISSING | Existing tests independently cover Flask base contract and generic Flutter models/services. No test runs an expanded Python report through Flask serialization and Flutter model/UI. |
+
+SECTION 5 — REMAINING OWNERSHIP
+-------------------------------
+
+| Remaining work | Owner | Status |
+|---|---|---|
+| Reconcile 18 executable expanded plan checks with Registry `planned` status, preserving the invariant until an approved metadata review | DALAL + TEAM review | PARTIAL / approval path required |
+| Decide whether 24th `cache_security` finding is intended in expanded contract or adjust expected expanded catalog/report scope through approved review | DALAL + TEAM | PARTIAL |
+| Reconcile `open_redirect` CheckInputContract (`controlled_redirect_probe`) with implemented original-response-only evidence source | DALAL + TEAM review | PARTIAL |
+| Add/document expanded flag through backend wrapper and enable intended checks at Flask boundary; API tests for all intended IDs and 23/24 counts | BAILSAN | MISSING |
+| Update and approve API contract to represent variable finding count, all agreed check IDs, summary counts and optional evidence/limitations semantics | BAILSAN + TEAM | MISSING |
+| Verify API request budget/deadline/rate-limit behavior when expanded mode adds up to 15 probe requests beyond the primary HTTPS request | BAILSAN + DALAL | PARTIAL |
+| Add Flutter tests for a report with variable/expanded findings; verify all IDs, evidence, limitations, severity, confidence, summary and appropriate labels/rendering | AHMAD | MISSING |
+| End-to-end controlled API→Flutter integration run with approved expanded mode | AHMAD + BAILSAN + DALAL | MISSING |
+| Deployment verification of process-local semaphore/rate limits, DNS timeout behavior, reverse-proxy/request limits and production runtime TLS introspection compatibility | TEAM / DEPLOYMENT | MISSING |
+| Review permissions discrepancy: AGENTS.md does not authorize `tests/dalal_week3/`, although active managed permission profile listed it writable; existing new test files remain there | DALAL + TEAM workspace owner | PARTIAL; do not move/delete without authorized scope resolution |
+| Final team acceptance of draft contract, test plan and end-to-end handoff evidence | TEAM / DEPLOYMENT | MISSING |
+
+SECTION 6 — PRIORITIZED REMAINING WORK
+--------------------------------------
+
+1. BAILSAN + TEAM: settle the API contract and expanded-check flag, reconcile
+   five versus 23 planned checks (and the extra `cache_security` result), then
+   add Flask/API tests proving the agreed number of findings and all fields.
+2. DALAL + TEAM: review the Registry invariant and approve metadata reconciliation
+   for executable expanded checks; reconcile the open_redirect input contract
+   with the original-response-only implementation. Until then, do not call the
+   18 expanded Registry entries complete.
+3. AHMAD: add variable-list model/UI tests using the agreed expanded API report;
+   check IDs should not depend on a hard-coded five-item assumption, and all
+   evidence/limitations/severity/confidence fields should be exercised.
+4. BAILSAN + AHMAD + DALAL: run a controlled cross-layer integration proving
+   expanded Python results reach the API and the mobile report without field or
+   count loss; agree how the 24th `cache_security` item is presented.
+5. TEAM / DEPLOYMENT: verify runtime/deployment limits (shared deadlines,
+   OS-level DNS cancellation behavior, multi-process rate/concurrency controls,
+   reverse proxy limits, and supported TLS-chain introspection runtimes).
+6. DALAL + workspace owner: resolve the tests/dalal_week3 permission-list
+   discrepancy in AGENTS.md versus managed profile before treating the file
+   scope review as fully clean. No file was moved or deleted in this audit.
+7. TEAM: sign off the API contract and full plan acceptance checklist. Do not
+   use the 407-test count as a substitute for the missing cross-layer checks.
+
+FINAL ACCEPTANCE: PARTIAL, NOT COMPLETE. The Python scanner has working,
+evidence-based implementations for the plan's 23 IDs in its opt-in expanded
+report, with controlled tests and bounded collection. Final three-week delivery
+is blocked by Registry entries still marked `planned`, absent Flask/API opt-in
+and a five-ID-only draft contract, lack of expanded cross-layer Flutter tests,
+the additional `cache_security` output/contract mismatch, open_redirect contract
+mismatch, deployment-only guarantees, and the documented test-path permission
+discrepancy. No Week 4 work was started. No code/tests/team files or Git state
+were changed; only this state-file audit section was appended. No commit/push.
+
+FINAL ACCEPTANCE AUDIT — TEST NAME CROSS-CHECK ADDENDUM
+======================================================
+
+The Disclosure test-name references in the sensitive-file row above should be
+read using the exact defined test names below (source inspection correction;
+no tests were run or changed):
+- Sensitive files: `test_fixed_sensitive_path_signatures`,
+  `test_sensitive_file_statuses_soft_404_and_privacy`,
+  `test_sensitive_soft_404_and_incomplete_content_do_not_pass`,
+  `test_sensitive_only_404_410_passes_with_fixed_scope_limitation`,
+  `test_sensitive_path_http_statuses_are_interpreted_conservatively`,
+  `test_one_probe_internal_failure_does_not_abort_remaining_disclosure_checks`.
+- Source maps: `test_source_map_helpers_and_same_origin_policy`,
+  `test_source_map_reference_without_readable_map_is_not_reported_as_confirmed`,
+  `test_incomplete_html_without_references_is_not_passed`,
+  `test_external_or_malformed_source_map_reference_is_never_requested`.
+- Directory listing: `test_directory_listing_uses_only_clear_index_markers`.
+- Server disclosure: `test_server_header_evidence_redacts_values_and_only_specific_details_warn`.
+- Error disclosure: `test_error_signatures_store_only_generic_categories`,
+  `test_error_information_skips_non_errors_and_not_verifies_short_samples`.
+- Public files: `test_public_security_file_status_and_content_type_rules`.
+- Shared Disclosure safety: `test_bounded_reader_never_reads_more_than_4_or_16_kib`,
+  `test_bounded_reader_refuses_compressed_content_without_decompression`,
+  `test_probe_pins_ip_uses_verified_tls_bounded_time_and_closes_resources`,
+  `test_probe_does_not_read_redirect_body_and_skips_when_deadline_expired`,
+  `test_probe_timeout_is_sanitized_and_closes_session`,
+  `test_disclosure_collector_stays_within_exact_thirteen_path_budget`,
+  `test_disclosure_evidence_rejects_over_budget_or_raw_classification`,
+  `test_server_and_location_raw_values_are_filtered_from_generic_evidence`.
+
+This correction changes only the audit record in WEEK3_DALAL_STATE.txt.

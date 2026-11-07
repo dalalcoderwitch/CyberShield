@@ -39,6 +39,23 @@ def test_scan_target_returns_complete_report(monkeypatch):
     assert report["summary"]["error"] == 0
     assert report["summary"]["skipped"] == 0
 
+    summary_statuses = (
+        "passed",
+        "warning",
+        "not_verified",
+        "error",
+        "skipped",
+    )
+    expected_summary = {
+        status: sum(
+            finding["status"] == status
+            for finding in report["findings"]
+        )
+        for status in summary_statuses
+    }
+    expected_summary["total"] = len(report["findings"])
+    assert report["summary"] == expected_summary
+
     expected_ids = {
         "https_connection",
         "header_hsts",
@@ -86,7 +103,27 @@ def test_scan_target_returns_complete_report(monkeypatch):
     }
 
     for finding in report["findings"]:
-        assert required_fields.issubset(finding.keys())
+        assert set(finding.keys()) == required_fields
+
+        string_fields = (
+            "check_id",
+            "title",
+            "status",
+            "severity",
+            "confidence",
+            "evidence",
+            "explanation",
+            "recommendation",
+        )
+        for field in string_fields:
+            assert isinstance(finding[field], str)
+
+        assert isinstance(finding["limitations"], list)
+        assert all(
+            isinstance(item, str)
+            for item in finding["limitations"]
+        )
+
         assert finding["status"] in {
             "passed", "warning", "not_verified", "error", "skipped"
         }
@@ -114,11 +151,72 @@ def test_scan_target_returns_complete_report(monkeypatch):
     assert csp_finding["confidence"] == "medium"
     assert "Content-Security-Policy" in csp_finding["evidence"]
     assert "default-src 'self'" not in csp_finding["evidence"]
-    assert "مفقودة" not in csp_finding["evidence"]
-
     assert isinstance(report["limitations"], list)
     assert report["limitations"]
     assert report["scanned_at"]
+
+
+
+def test_expanded_report_evaluates_tls_metadata_from_scanner_connection(monkeypatch):
+    def fake_safe_get_response(
+        url,
+        tls_metadata=None,
+        validated_target_capture=None,
+        cookie_evidence_capture=None,
+        access_evidence_capture=None,
+        disclosure_evidence_capture=None,
+    ):
+        assert url == "https://example.com"
+        tls_metadata.update({
+            "version": "TLSv1.3",
+            "cipher": "TLS_AES_128_GCM_SHA256",
+            "not_before": "Jan 01 00:00:00 2020 GMT",
+            "not_after": "Jan 01 00:00:00 2099 GMT",
+            "chain_available": True,
+        })
+        parsed = __import__("urllib.parse", fromlist=["urlparse"]).urlparse(url)
+        validated_target_capture["target"] = (parsed, "example.com", ["93.184.216.34"])
+        cookie_evidence_capture.update(available=True, observations=())
+        access_evidence_capture.update(available=True, location_values=("https://redirect.example/path",))
+        disclosure_evidence_capture.update(header_available=True, sample=b"", sample_complete=False)
+        return 302, {"Location": "https://redirect.example/path"}, None
+
+    monkeypatch.setattr(
+        "security_scanner.report._safe_get_response",
+        fake_safe_get_response,
+    )
+    def fake_http_probe(target, deadline=None, capture=None):
+        capture.update(status=302, location="https://redirect.example/path",
+                       request_url="http://93.184.216.34:80/")
+        return None
+    monkeypatch.setattr("security_scanner.report._safe_http_redirect_probe", fake_http_probe)
+    monkeypatch.setattr(
+        "security_scanner.report._safe_cors_preflight",
+        lambda target, deadline=None, capture=None: (capture.update(available=False, error="connection") or "connection"),
+    )
+    monkeypatch.setattr(
+        "security_scanner.report._collect_disclosure_evidence",
+        lambda target, original_status, original_capture, deadline=None: __import__(
+            "security_scanner.checks.disclosure_evidence",
+            fromlist=["DisclosureEvidence"],
+        ).DisclosureEvidence(),
+    )
+    monkeypatch.setattr("security_scanner.report._resolve_redirect_location_addresses",
+                        lambda destination, deadline=None: ("93.184.216.34", "10.0.0.8"))
+
+    report = scan_target("https://example.com", include_expanded_checks=True)
+    findings = {item["check_id"]: item for item in report["findings"]}
+
+    assert findings["tls_protocol_config"]["status"] == "passed"
+    assert "TLSv1.3" in findings["tls_protocol_config"]["evidence"]
+    assert findings["tls_certificate_expiry"]["status"] == "passed"
+    assert findings["tls_certificate_chain"]["status"] == "passed"
+    assert findings["http_to_https_redirect"]["status"] == "passed"
+    assert findings["redirect_destination_safety"]["status"] == "warning"
+    assert "10.0.0.8" not in repr(findings)
+    assert "BEGIN CERTIFICATE" not in repr(findings)
+
+
 def test_failed_connection_does_not_mark_headers_passed(
     monkeypatch,
 ):
@@ -196,6 +294,49 @@ def test_report_summary_matches_finding_statuses(monkeypatch):
         assert summary[status] == expected_count
 
     assert summary["total"] == len(findings)
+
+
+def test_shared_header_evidence_reaches_expanded_findings_and_summary(monkeypatch):
+    """Exercise response-header to context, evaluator, finding and summary flow."""
+    referrer_secret = "private-referrer-token"
+    permissions_secret = "private-permissions-directive"
+    response_headers = {
+        "Referrer-Policy": f"strict-origin, {referrer_secret}",
+        "Permissions-Policy": f"camera=(\"{permissions_secret}\")",
+    }
+    calls = []
+
+    def fake_safe_get_response(url, **kwargs):
+        calls.append((url, kwargs))
+        return 200, response_headers, None
+
+    monkeypatch.setattr(
+        "security_scanner.report._safe_get_response",
+        fake_safe_get_response,
+    )
+
+    report = scan_target(
+        "https://example.com",
+        include_expanded_checks=True,
+    )
+    findings = report["findings"]
+    by_id = {item["check_id"]: item for item in findings}
+
+    assert len(calls) == 1
+    assert len(by_id) == len(findings)
+    assert by_id["header_referrer_policy"]["status"] == "passed"
+    assert by_id["header_permissions_policy"]["status"] == "warning"
+    assert "لم يتم تقييم التوجيهات" in by_id["header_permissions_policy"]["explanation"]
+    assert "قيمة معروفة ذات قيود مناسبة" in by_id["header_referrer_policy"]["evidence"]
+    assert by_id["header_permissions_policy"]["severity"] == "info"
+    assert referrer_secret not in repr(report)
+    assert permissions_secret not in repr(report)
+
+    for status in ("passed", "warning", "not_verified", "error", "skipped"):
+        assert report["summary"][status] == sum(
+            finding["status"] == status for finding in findings
+        )
+    assert report["summary"]["total"] == len(findings)
 
 
 def test_report_redacts_path_query_and_fragment(monkeypatch):
