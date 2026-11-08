@@ -391,16 +391,33 @@ class _HomeScreenState extends State<HomeScreen> {
     ),
   );
 
-  Widget _checkCategories() => const Wrap(
-    spacing: 10,
-    runSpacing: 10,
+  Widget _checkCategories() => const Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      _CategoryChip(icon: Icons.lock_outline, label: 'HTTPS وTLS'),
-      _CategoryChip(icon: Icons.tune, label: 'ترويسات الأمان'),
-      _CategoryChip(icon: Icons.cookie_outlined, label: 'الكوكيز'),
-      _CategoryChip(icon: Icons.dns_outlined, label: 'DNS'),
-      _CategoryChip(icon: Icons.visibility_outlined, label: 'كشف المعلومات'),
-      _CategoryChip(icon: Icons.policy_outlined, label: 'سياسات الوصول'),
+      Text(
+        'مجالات الفحص في خطة CyberShield',
+        style: TextStyle(fontSize: 12, color: Color(0xFF91A9CC)),
+      ),
+      SizedBox(height: 10),
+      Wrap(
+        spacing: 10,
+        runSpacing: 10,
+        children: [
+          _CategoryChip(icon: Icons.lock_outline, label: 'HTTPS وTLS'),
+          _CategoryChip(icon: Icons.tune, label: 'ترويسات الأمان'),
+          _CategoryChip(icon: Icons.cookie_outlined, label: 'الكوكيز'),
+          _CategoryChip(icon: Icons.dns_outlined, label: 'DNS'),
+          _CategoryChip(icon: Icons.visibility_outlined, label: 'كشف المعلومات'),
+          _CategoryChip(icon: Icons.policy_outlined, label: 'سياسات الوصول'),
+          _CategoryChip(icon: Icons.cached_outlined, label: 'التخزين المؤقت'),
+          _CategoryChip(icon: Icons.code_outlined, label: 'مؤشرات XSS وSQLi'),
+        ],
+      ),
+      SizedBox(height: 9),
+      Text(
+        'تظهر في التقرير نتائج الفحوصات التي ينفذها المحرك فعلياً فقط.',
+        style: TextStyle(fontSize: 11, color: Color(0xFF8299B9), height: 1.6),
+      ),
     ],
   );
 
