@@ -1,4 +1,7 @@
+import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 
 void main() {
   runApp(const CyberShieldApp());
@@ -68,7 +71,7 @@ class _HomeScreenState extends State<HomeScreen> {
     super.dispose();
   }
 
-  void _startScan() {
+  Future<void> _startScan() async {
     final input = _urlController.text.trim();
     final uri = Uri.tryParse(input);
 
@@ -88,7 +91,59 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
 
-    _showMessage('الواجهة جاهزة، وسيتم ربط محرك الفحص في الخطوة القادمة.');
+    try {
+      final response = await http
+          .post(
+            Uri.parse('http://10.0.2.2:5000/api/v1/scan'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'target_url': input,
+              'authorization_confirmed': _authorizationConfirmed,
+            }),
+          )
+          .timeout(const Duration(seconds: 30));
+
+      final decoded = jsonDecode(response.body);
+
+      if (!mounted) return;
+
+      if (response.statusCode == 200 &&
+          decoded is Map<String, dynamic>) {
+        final summary = decoded['summary'];
+
+        if (summary is Map) {
+          _showMessage(
+            'اكتمل الفحص: ناجح ${summary['passed'] ?? 0}، '
+            'تحذيرات ${summary['warning'] ?? 0}، '
+            'غير متحقق ${summary['not_verified'] ?? 0}، '
+            'أخطاء ${summary['error'] ?? 0}، '
+            'متجاوز ${summary['skipped'] ?? 0}.',
+          );
+        } else {
+          _showMessage('تم استلام تقرير الفحص.');
+        }
+
+        return;
+      }
+
+      final error = decoded is Map ? decoded['error'] : null;
+      final message = error is Map ? error['message'] : null;
+
+      _showMessage(
+        message is String
+            ? message
+            : 'تعذر تنفيذ الفحص. رمز الاستجابة: ${response.statusCode}',
+      );
+    } on TimeoutException {
+      if (!mounted) return;
+      _showMessage('انتهت مهلة الاتصال بالخادم. حاولي مرة أخرى.');
+    } on FormatException {
+      if (!mounted) return;
+      _showMessage('استجابة الخادم غير صالحة.');
+    } catch (_) {
+      if (!mounted) return;
+      _showMessage('تعذر الاتصال بخادم CyberShield. تأكدي من تشغيل Flask.');
+    }
   }
 
   void _showMessage(String message) {
