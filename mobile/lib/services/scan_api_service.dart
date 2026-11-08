@@ -52,6 +52,7 @@ class ScanApiService {
       {
         'target_url': targetUrl,
         'authorization_confirmed': authorizationConfirmed,
+        'include_expanded_checks': true,
       },
     );
 
