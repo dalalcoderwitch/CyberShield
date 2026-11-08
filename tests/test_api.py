@@ -284,6 +284,60 @@ def test_scan_endpoint_returns_contract_compatible_report(monkeypatch):
     assert report["limitations"]
     assert report["target_url"] == "https://example.com"
 
+def test_scan_can_request_expanded_checks(monkeypatch):
+    """تمرير خيار الفحوص الموسعة صراحةً من API إلى المحرك."""
+    app = api_module.create_app()
+    client = app.test_client()
+    resolved = object()
+    captured = {}
+
+    monkeypatch.setattr(
+        api_module,
+        "resolve_target",
+        lambda url, deadline=None: resolved,
+    )
+
+    def fake_scan(url, resolved_target=None, deadline=None,
+                  include_expanded_checks=False):
+        captured["include_expanded_checks"] = include_expanded_checks
+        captured["resolved_target"] = resolved_target
+        return {"status": "completed", "findings": [{}] * 24}
+
+    monkeypatch.setattr(api_module, "scan_target", fake_scan)
+
+    response = client.post(
+        "/api/v1/scan",
+        json={
+            "target_url": "https://example.com",
+            "authorization_confirmed": True,
+            "include_expanded_checks": True,
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured["include_expanded_checks"] is True
+    assert captured["resolved_target"] is resolved
+    assert len(response.json["findings"]) == 24
+
+
+def test_scan_rejects_non_boolean_expanded_option():
+    """رفض قيمة include_expanded_checks إذا لم تكن Boolean."""
+    app = api_module.create_app()
+    client = app.test_client()
+
+    response = client.post(
+        "/api/v1/scan",
+        json={
+            "target_url": "https://example.com",
+            "authorization_confirmed": True,
+            "include_expanded_checks": "true",
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json["error"]["code"] == "INVALID_REQUEST"
+
+
 def test_scan_returns_report(monkeypatch):
     app = api_module.create_app()
     client = app.test_client()
