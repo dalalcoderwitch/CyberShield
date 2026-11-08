@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:mobile/models/scan_report.dart';
+import 'package:mobile/screens/report_screen.dart';
+import 'package:mobile/services/scan_api_service.dart';
 
 void main() => runApp(const CyberShieldApp());
 
@@ -64,19 +67,21 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final _urlController = TextEditingController();
+  final ScanApiService _apiService = ScanApiService();
   bool _authorizationConfirmed = false;
+  bool _isScanning = false;
 
   @override
   void dispose() {
     _urlController.dispose();
+    _apiService.dispose();
     super.dispose();
   }
 
-  void _startScan() {
+  Future<void> _startScan() async {
     final input = _urlController.text.trim();
     final uri = Uri.tryParse(input);
-    final validUrl =
-        uri != null &&
+    final validUrl = uri != null &&
         uri.scheme.toLowerCase() == 'https' &&
         uri.host.isNotEmpty &&
         uri.userInfo.isEmpty;
@@ -89,11 +94,30 @@ class _HomeScreenState extends State<HomeScreen> {
       _showMessage('يرجى تأكيد امتلاكك تصريحاً بفحص الموقع.');
       return;
     }
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => ResultsScreen(targetUrl: uri.toString()),
-      ),
-    );
+    if (_isScanning) return;
+
+    setState(() => _isScanning = true);
+    ScanReport? report;
+    try {
+      report = await _apiService.scan(
+        targetUrl: uri.toString(),
+        authorizationConfirmed: _authorizationConfirmed,
+      );
+    } on ApiException catch (error) {
+      if (mounted) _showMessage(error.message);
+    } catch (_) {
+      if (mounted) _showMessage('حدث خطأ غير متوقع أثناء الاتصال بالخادم.');
+    } finally {
+      if (mounted) setState(() => _isScanning = false);
+    }
+
+    if (report != null && mounted) {
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => ReportScreen(report: report!),
+        ),
+      );
+    }
   }
 
   void _showMessage(String message) {
@@ -340,11 +364,17 @@ class _HomeScreenState extends State<HomeScreen> {
               ],
             ),
             child: FilledButton.icon(
-              onPressed: _startScan,
-              icon: const Icon(Icons.radar),
-              label: const Text(
-                'بدء الفحص الأمني',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              onPressed: _isScanning ? null : _startScan,
+              icon: _isScanning
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.radar),
+              label: Text(
+                _isScanning ? 'جارٍ تنفيذ الفحص...' : 'بدء الفحص الأمني',
+                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
               ),
               style: FilledButton.styleFrom(
                 backgroundColor: Colors.transparent,
@@ -471,387 +501,3 @@ class _GlowOrb extends StatelessWidget {
 
 /// صفحة معاينة النتائج.
 /// البيانات هنا ليست نتائج فحص فعلية؛ ستُستبدل باستجابة API عند التكامل.
-class ResultsScreen extends StatelessWidget {
-  const ResultsScreen({super.key, required this.targetUrl});
-
-  final String targetUrl;
-
-  static const _muted = Color(0xFF91A9CC);
-  static const _line = Color(0xFF173B68);
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        backgroundColor: CyberShieldApp.navy,
-        surfaceTintColor: Colors.transparent,
-        title: const Text(
-          'تقرير الفحص',
-          style: TextStyle(fontWeight: FontWeight.bold),
-        ),
-        actions: const [
-          Padding(
-            padding: EdgeInsetsDirectional.only(end: 18),
-            child: Icon(Icons.shield_outlined, color: CyberShieldApp.cyan),
-          ),
-        ],
-      ),
-      body: Stack(
-        children: [
-          const Positioned(
-            top: -110,
-            left: -100,
-            child: _GlowOrb(size: 260),
-          ),
-          SafeArea(
-            child: Center(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(20, 12, 20, 30),
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 620),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      _buildTargetCard(),
-                      const SizedBox(height: 16),
-                      _buildStatusCard(),
-                      const SizedBox(height: 18),
-                      const Text(
-                        'ملخص الفحص',
-                        style: TextStyle(
-                          fontSize: 19,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      _buildSummaryGrid(),
-                      const SizedBox(height: 22),
-                      const Text(
-                        'تفاصيل مجموعات الفحص',
-                        style: TextStyle(
-                          fontSize: 19,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      _buildCheckList(),
-                      const SizedBox(height: 18),
-                      _buildLimitNotice(),
-                      const SizedBox(height: 22),
-                      SizedBox(
-                        height: 52,
-                        child: FilledButton.icon(
-                          onPressed: () => Navigator.of(context).pop(),
-                          icon: const Icon(Icons.arrow_forward),
-                          label: const Text(
-                            'العودة إلى الصفحة الرئيسية',
-                            style: TextStyle(fontWeight: FontWeight.bold),
-                          ),
-                          style: FilledButton.styleFrom(
-                            backgroundColor: CyberShieldApp.blue,
-                            foregroundColor: Colors.white,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(14),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildTargetCard() => Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: const Color(0xFF081A35),
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: _line),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'الموقع المستهدف',
-              style: TextStyle(color: _muted, fontSize: 12),
-            ),
-            const SizedBox(height: 7),
-            Directionality(
-              textDirection: TextDirection.ltr,
-              child: SelectableText(
-                targetUrl,
-                textAlign: TextAlign.left,
-                style: const TextStyle(
-                  color: CyberShieldApp.cyan,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
-          ],
-        ),
-      );
-
-  Widget _buildStatusCard() => Container(
-        padding: const EdgeInsets.all(18),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(20),
-          gradient: const LinearGradient(
-            begin: Alignment.topRight,
-            end: Alignment.bottomLeft,
-            colors: [Color(0xFF0C2D59), Color(0xFF06152D), Color(0xFF030B1A)],
-          ),
-          border: Border.all(color: const Color(0xFF14549A)),
-          boxShadow: [
-            BoxShadow(
-              color: CyberShieldApp.blue.withValues(alpha: .12),
-              blurRadius: 24,
-            ),
-          ],
-        ),
-        child: const Column(
-          children: [
-            Icon(
-              Icons.hourglass_top_rounded,
-              color: CyberShieldApp.cyan,
-              size: 38,
-            ),
-            SizedBox(height: 10),
-            Text(
-              'الواجهة جاهزة لاستقبال النتائج',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-            ),
-            SizedBox(height: 7),
-            Text(
-              'لم يتم تنفيذ فحص أمني فعلي بعد',
-              textAlign: TextAlign.center,
-              style: TextStyle(color: Color(0xFFB7C9E4), fontSize: 13),
-            ),
-            SizedBox(height: 12),
-            _DemoBadge(),
-          ],
-        ),
-      );
-
-  Widget _buildSummaryGrid() => GridView.count(
-        crossAxisCount: 2,
-        shrinkWrap: true,
-        physics: NeverScrollableScrollPhysics(),
-        crossAxisSpacing: 10,
-        mainAxisSpacing: 10,
-        childAspectRatio: 2.25,
-        children: [
-          _SummaryTile(
-            icon: Icons.verified_outlined,
-            label: 'سليم',
-            value: '—',
-            color: Color(0xFF35C8FF),
-          ),
-          _SummaryTile(
-            icon: Icons.warning_amber_rounded,
-            label: 'تحذيرات',
-            value: '—',
-            color: Color(0xFFFFC857),
-          ),
-          _SummaryTile(
-            icon: Icons.error_outline,
-            label: 'مخاطر',
-            value: '—',
-            color: Color(0xFFFF6B78),
-          ),
-          _SummaryTile(
-            icon: Icons.help_outline,
-            label: 'لم يتم التحقق',
-            value: '—',
-            color: Color(0xFF91A9CC),
-          ),
-        ],
-      );
-
-  Widget _buildCheckList() => Container(
-        decoration: BoxDecoration(
-          color: const Color(0xFF081A35),
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: _line),
-        ),
-        child: const Column(
-          children: [
-            _PendingCheckTile(
-              icon: Icons.lock_outline,
-              title: 'HTTPS وTLS',
-            ),
-            Divider(height: 1, color: _line),
-            _PendingCheckTile(
-              icon: Icons.tune,
-              title: 'ترويسات الأمان',
-            ),
-            Divider(height: 1, color: _line),
-            _PendingCheckTile(
-              icon: Icons.cookie_outlined,
-              title: 'الكوكيز',
-            ),
-            Divider(height: 1, color: _line),
-            _PendingCheckTile(
-              icon: Icons.dns_outlined,
-              title: 'DNS',
-            ),
-            Divider(height: 1, color: _line),
-            _PendingCheckTile(
-              icon: Icons.visibility_outlined,
-              title: 'كشف المعلومات',
-            ),
-            Divider(height: 1, color: _line),
-            _PendingCheckTile(
-              icon: Icons.policy_outlined,
-              title: 'سياسات الوصول',
-            ),
-          ],
-        ),
-      );
-
-  Widget _buildLimitNotice() => Container(
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: const Color(0xFF17233A),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: const Color(0xFF365174)),
-        ),
-        child: const Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(Icons.info_outline, color: CyberShieldApp.cyan),
-            SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                'هذه معاينة لشكل التقرير فقط. ستظهر حالة كل فحص ودرجة الخطورة والأدلة والتوصيات بعد ربط التطبيق بخدمة الفحص. عدم ظهور نتيجة لا يعني أن الموقع آمن.',
-                style: TextStyle(
-                  color: Color(0xFFB7C9E4),
-                  fontSize: 12,
-                  height: 1.8,
-                ),
-              ),
-            ),
-          ],
-        ),
-      );
-}
-
-class _DemoBadge extends StatelessWidget {
-  const _DemoBadge();
-
-  @override
-  Widget build(BuildContext context) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-        decoration: BoxDecoration(
-          color: CyberShieldApp.cyan.withValues(alpha: .10),
-          borderRadius: BorderRadius.circular(30),
-          border: Border.all(
-            color: CyberShieldApp.cyan.withValues(alpha: .45),
-          ),
-        ),
-        child: const Text(
-          'معاينة الواجهة — دون نتائج حقيقية',
-          style: TextStyle(
-            color: CyberShieldApp.cyan,
-            fontSize: 11,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-      );
-}
-
-class _SummaryTile extends StatelessWidget {
-  const _SummaryTile({
-    required this.icon,
-    required this.label,
-    required this.value,
-    required this.color,
-  });
-
-  final IconData icon;
-  final String label;
-  final String value;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        decoration: BoxDecoration(
-          color: const Color(0xFF081A35),
-          borderRadius: BorderRadius.circular(15),
-          border: Border.all(color: const Color(0xFF173B68)),
-        ),
-        child: Row(
-          children: [
-            Icon(icon, color: color, size: 22),
-            const SizedBox(width: 9),
-            Expanded(
-              child: Text(
-                label,
-                style: const TextStyle(
-                  color: Color(0xFFB7C9E4),
-                  fontSize: 11,
-                ),
-              ),
-            ),
-            Text(
-              value,
-              style: TextStyle(
-                color: color,
-                fontSize: 19,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ],
-        ),
-      );
-}
-
-class _PendingCheckTile extends StatelessWidget {
-  const _PendingCheckTile({
-    required this.icon,
-    required this.title,
-  });
-
-  final IconData icon;
-  final String title;
-
-  @override
-  Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-        child: Row(
-          children: [
-            Icon(icon, color: CyberShieldApp.cyan, size: 21),
-            const SizedBox(width: 11),
-            Expanded(
-              child: Text(
-                title,
-                style: const TextStyle(
-                  color: Color(0xFFD7E6FA),
-                  fontSize: 13,
-                ),
-              ),
-            ),
-            const Text(
-              'بانتظار التكامل',
-              style: TextStyle(
-                color: Color(0xFF91A9CC),
-                fontSize: 11,
-              ),
-            ),
-            const SizedBox(width: 6),
-            const Icon(
-              Icons.schedule_rounded,
-              color: Color(0xFF91A9CC),
-              size: 16,
-            ),
-          ],
-        ),
-      );
-}
