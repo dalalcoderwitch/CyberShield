@@ -103,6 +103,9 @@ def create_app():
         authorization_confirmed = data.get(
             "authorization_confirmed"
         )
+        include_expanded_checks = data.get(
+            "include_expanded_checks", False
+        )
 
         if (
             not isinstance(target_url, str)
@@ -110,6 +113,7 @@ def create_app():
             or target_url != target_url.strip()
             or len(target_url) > 2048
             or not isinstance(authorization_confirmed, bool)
+            or not isinstance(include_expanded_checks, bool)
         ):
             return jsonify({
                 "error": {
@@ -180,11 +184,14 @@ def create_app():
                 }), 403
 
             # تمرير نتيجة التحقق نفسها والمهلة المتبقية إلى المحرك.
-            report = scan_target(
-                target_url,
-                resolved_target=resolved_target,
-                deadline=deadline,
-            )
+            scan_options = {
+                "resolved_target": resolved_target,
+                "deadline": deadline,
+            }
+            if include_expanded_checks:
+                scan_options["include_expanded_checks"] = True
+
+            report = scan_target(target_url, **scan_options)
 
             if time.monotonic() >= deadline:
                 return scan_timeout_response()
