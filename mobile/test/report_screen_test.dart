@@ -69,3 +69,58 @@ void main() {
     },
   );
 }
+
+  testWidgets(
+    'ReportScreen renders a report with 30 findings dynamically',
+    (WidgetTester tester) async {
+      final findings = List.generate(
+        30,
+        (index) => {
+          'check_id': 'expanded_check_${index + 1}',
+          'title': 'فحص موسع ${index + 1}',
+          'status': index.isEven ? 'not_verified' : 'warning',
+          'severity': 'info',
+          'confidence': 'low',
+          'evidence': {'sample': index + 1},
+          'explanation': 'توضيح الفحص ${index + 1}',
+          'recommendation': 'مراجعة الفحص ${index + 1}',
+          'limitations': <String>[],
+        },
+      );
+
+      final report = ScanReport.fromJson({
+        'scan_id': 'scan-030',
+        'status': 'completed',
+        'target_url': 'https://example.com',
+        'scanned_at': '2026-11-09T12:00:00Z',
+        'summary': {
+          'total': 30,
+          'passed': 0,
+          'warning': 15,
+          'not_verified': 15,
+          'error': 0,
+          'skipped': 0,
+        },
+        'findings': findings,
+        'notice': 'هذا تقييم أولي محدود.',
+      });
+
+      await tester.pumpWidget(
+        MaterialApp(home: ReportScreen(report: report)),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('30'), findsOneWidget);
+
+      final lastFinding = find.text('فحص موسع 30');
+      await tester.scrollUntilVisible(
+        lastFinding,
+        300,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.pumpAndSettle();
+
+      expect(lastFinding, findsOneWidget);
+      expect(find.text('غير متحقق'), findsWidgets);
+    },
+  );
