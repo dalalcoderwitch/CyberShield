@@ -91,7 +91,7 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
     if (!_authorizationConfirmed) {
-      _showMessage('يرجى تأكيد امتلاكك تصريحاً بفحص الموقع.');
+      _showMessage('يرجى تأكيد امتلاكك تصريحاً لفحص الموقع.');
       return;
     }
     if (_isScanning) return;
