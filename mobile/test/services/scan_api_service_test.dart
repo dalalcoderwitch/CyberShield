@@ -50,6 +50,7 @@ void main() {
           body['authorization_confirmed'],
           true,
         );
+        expect(body['include_expanded_checks'], true);
 
         return http.Response(
           jsonEncode({
