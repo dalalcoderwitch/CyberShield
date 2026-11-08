@@ -68,7 +68,6 @@ void main() {
       await checkVisibleText('هذا تقييم أولي محدود.');
     },
   );
-}
 
   testWidgets(
     'ReportScreen renders a report with 30 findings dynamically',
@@ -124,3 +123,4 @@ void main() {
       expect(find.text('غير متحقق'), findsWidgets);
     },
   );
+}
