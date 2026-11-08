@@ -9,8 +9,9 @@ void main() {
   ) async {
     await tester.pumpWidget(const CyberShieldApp());
 
-    expect(find.text('CyberShield'), findsOneWidget);
-    expect(find.text('درعك الأول في الأمن السيبراني'), findsOneWidget);
+    expect(find.text('CYBER'), findsOneWidget);
+    expect(find.text('SHIELD'), findsOneWidget);
+    expect(find.text('درعك الذكي لعالم رقمي أكثر أماناً'), findsOneWidget);
     expect(find.text('رابط الموقع'), findsOneWidget);
     expect(find.text('بدء الفحص'), findsOneWidget);
 
@@ -56,7 +57,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
 
     expect(
-      find.text('يرجى تأكيد امتلاكك تصريحاً لفحص الموقع.'),
+      find.text('يرجى تأكيد امتلاكك تصريحاً بفحص الموقع.'),
       findsOneWidget,
     );
   });
