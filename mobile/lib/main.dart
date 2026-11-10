@@ -81,7 +81,8 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _startScan() async {
     final input = _urlController.text.trim();
     final uri = Uri.tryParse(input);
-    final validUrl = uri != null &&
+    final validUrl =
+        uri != null &&
         uri.scheme.toLowerCase() == 'https' &&
         uri.host.isNotEmpty &&
         uri.userInfo.isEmpty;
@@ -113,9 +114,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     if (report != null && mounted) {
       await Navigator.of(context).push(
-        MaterialPageRoute<void>(
-          builder: (_) => ReportScreen(report: report!),
-        ),
+        MaterialPageRoute<void>(builder: (_) => ReportScreen(report: report!)),
       );
     }
   }
@@ -328,11 +327,10 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
         const SizedBox(height: 13),
-        Container(
-          decoration: BoxDecoration(
-            color: const Color(0xFF061329),
-            borderRadius: BorderRadius.circular(13),
-          ),
+        Material(
+          color: const Color(0xFF061329),
+          borderRadius: BorderRadius.circular(13),
+          clipBehavior: Clip.antiAlias,
           child: CheckboxListTile(
             value: _authorizationConfirmed,
             onChanged: (value) =>
@@ -374,7 +372,10 @@ class _HomeScreenState extends State<HomeScreen> {
                   : const Icon(Icons.radar),
               label: Text(
                 _isScanning ? 'جارٍ تنفيذ الفحص...' : 'بدء الفحص الأمني',
-                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
               style: FilledButton.styleFrom(
                 backgroundColor: Colors.transparent,
@@ -408,9 +409,15 @@ class _HomeScreenState extends State<HomeScreen> {
           _CategoryChip(icon: Icons.cookie_outlined, label: 'ملفات Cookies'),
           _CategoryChip(icon: Icons.cached_outlined, label: 'التخزين المؤقت'),
           _CategoryChip(icon: Icons.policy_outlined, label: 'CORS والتحويلات'),
-          _CategoryChip(icon: Icons.visibility_outlined, label: 'كشف المعلومات'),
+          _CategoryChip(
+            icon: Icons.visibility_outlined,
+            label: 'كشف المعلومات',
+          ),
           _CategoryChip(icon: Icons.dns_outlined, label: 'DNS — غير مفعّل'),
-          _CategoryChip(icon: Icons.code_outlined, label: 'XSS/SQLi — غير مفعّل'),
+          _CategoryChip(
+            icon: Icons.code_outlined,
+            label: 'XSS/SQLi — غير مفعّل',
+          ),
         ],
       ),
       SizedBox(height: 9),
@@ -514,7 +521,6 @@ class _GlowOrb extends StatelessWidget {
     ),
   );
 }
-
 
 /// صفحة معاينة النتائج.
 /// البيانات هنا ليست نتائج فحص فعلية؛ ستُستبدل باستجابة API عند التكامل.

@@ -12,11 +12,11 @@ void main() {
     expect(find.text('CYBER'), findsOneWidget);
     expect(find.text('SHIELD'), findsOneWidget);
     expect(find.text('درعك الذكي لعالم رقمي أكثر أماناً'), findsOneWidget);
-    expect(find.text('رابط الموقع'), findsOneWidget);
+    expect(find.text('رابط الموقع الإلكتروني'), findsOneWidget);
     expect(find.text('بدء الفحص الأمني'), findsOneWidget);
 
     final direction = Directionality.of(
-      tester.element(find.text('رابط الموقع')),
+      tester.element(find.text('رابط الموقع الإلكتروني')),
     );
 
     expect(direction, TextDirection.rtl);
@@ -57,7 +57,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
 
     expect(
-      find.text('يرجى تأكيد امتلاكك تصريحاً بفحص الموقع.'),
+      find.text('يرجى تأكيد امتلاكك تصريحاً لفحص الموقع.'),
       findsOneWidget,
     );
   });

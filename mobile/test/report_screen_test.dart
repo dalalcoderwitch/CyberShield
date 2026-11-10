@@ -110,6 +110,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('30'), findsOneWidget);
+      expect(find.text('غير متحقق'), findsWidgets);
 
       final lastFinding = find.text('فحص موسع 30');
       await tester.scrollUntilVisible(
@@ -120,7 +121,6 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(lastFinding, findsOneWidget);
-      expect(find.text('غير متحقق'), findsWidgets);
     },
   );
 }
