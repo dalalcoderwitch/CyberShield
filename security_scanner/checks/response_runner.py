@@ -27,6 +27,10 @@ _LOGGER = logging.getLogger(__name__)
 _RESPONSE_EVALUATORS = (
     ("header_referrer_policy", ReferrerPolicyEvaluator),
     ("header_permissions_policy", PermissionsPolicyEvaluator),
+)
+
+# Reserved for the Week 4 cache-security phase.
+_WEEK4_RESPONSE_EVALUATORS = (
     ("cache_security", CacheSecurityEvaluator),
 )
 
@@ -52,15 +56,23 @@ _DISCLOSURE_EVALUATORS = tuple((check_id, DisclosureEvaluator) for check_id in (
 
 def evaluate_response_evidence_prototypes(
     evidence: EvidenceCollection,
+    *,
+    include_week4: bool = True,
 ):
-    """Evaluate prepared checks using an existing evidence snapshot."""
+    """Evaluate response checks, optionally including Week 4 checks."""
     if not isinstance(evidence, EvidenceCollection):
         raise TypeError("evidence must be an EvidenceCollection")
+    if type(include_week4) is not bool:
+        raise TypeError("include_week4 must be a bool")
 
     registry = create_default_registry()
     results = []
 
-    for check_id, evaluator_type in _RESPONSE_EVALUATORS:
+    evaluator_group = _RESPONSE_EVALUATORS
+    if include_week4:
+        evaluator_group += _WEEK4_RESPONSE_EVALUATORS
+
+    for check_id, evaluator_type in evaluator_group:
         definition = registry.get(check_id)
 
         if definition is None:
@@ -106,7 +118,9 @@ def evaluate_week3_evidence(evidence: EvidenceCollection):
     if not isinstance(evidence, EvidenceCollection):
         raise TypeError("evidence must be an EvidenceCollection")
     registry = create_default_registry()
-    results = list(evaluate_response_evidence_prototypes(evidence))
+    results = list(
+        evaluate_response_evidence_prototypes(evidence, include_week4=False)
+    )
     for check_id, evaluator_type in _TLS_EVALUATORS + _BLOCKED_REDIRECT_EVALUATORS:
         definition = registry.get(check_id)
         results.append(evaluator_type(definition).evaluate(evidence))

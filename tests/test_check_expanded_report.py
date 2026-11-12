@@ -1,4 +1,4 @@
-﻿from importlib import import_module
+from importlib import import_module
 
 import pytest
 
@@ -7,10 +7,9 @@ report_module = import_module("security_scanner.report")
 
 TARGET_URL = "https://example.com"
 
-EXPANDED_CHECK_IDS = {
+WEEK3_RESPONSE_CHECK_IDS = {
     "header_referrer_policy",
     "header_permissions_policy",
-    "cache_security",
     "cookie_secure",
     "cookie_httponly",
     "cookie_samesite",
@@ -23,6 +22,33 @@ EXPANDED_CHECK_IDS = {
     "error_information_disclosure",
     "public_security_files",
 }
+
+FOUNDATIONAL_CHECK_IDS = {
+    "https_connection",
+    "header_hsts",
+    "header_csp",
+    "header_x_content_type_options",
+    "header_x_frame_options",
+}
+
+TLS_REDIRECT_CHECK_IDS = {
+    "tls_certificate_expiry",
+    "tls_certificate_chain",
+    "tls_protocol_config",
+    "http_to_https_redirect",
+    "redirect_destination_safety",
+}
+
+WEEK3_EXPANDED_CHECK_IDS = TLS_REDIRECT_CHECK_IDS | WEEK3_RESPONSE_CHECK_IDS
+
+DNS_WEEK4_CHECK_IDS = {"dns_dmarc", "dns_spf", "dnssec"}
+
+EXPECTED_REPORT_CHECK_IDS = (
+    FOUNDATIONAL_CHECK_IDS
+    | TLS_REDIRECT_CHECK_IDS
+    | WEEK3_RESPONSE_CHECK_IDS
+    | DNS_WEEK4_CHECK_IDS
+)
 
 
 def install_mock_response(monkeypatch, result):
@@ -56,12 +82,12 @@ def test_default_report_keeps_five_findings(monkeypatch):
     assert len(calls) == 1
     assert len(report["findings"]) == 5
     assert not (
-        EXPANDED_CHECK_IDS
+        WEEK3_RESPONSE_CHECK_IDS
         & {item["check_id"] for item in report["findings"]}
     )
 
 
-def test_expanded_report_adds_cookie_findings_from_one_response(monkeypatch):
+def test_expanded_report_contains_25_findings_from_one_response(monkeypatch):
     headers = {
         "Referrer-Policy": "strict-origin-when-cross-origin",
         "Permissions-Policy": "geolocation=(), microphone=()",
@@ -81,11 +107,12 @@ def test_expanded_report_adds_cookie_findings_from_one_response(monkeypatch):
     check_ids = [item["check_id"] for item in findings]
 
     assert len(calls) == 1
-    assert len(findings) == 24
-    assert len(set(check_ids)) == 24
-    assert EXPANDED_CHECK_IDS <= set(check_ids)
+    assert len(findings) == 26
+    assert len(set(check_ids)) == 26
+    assert set(check_ids) == EXPECTED_REPORT_CHECK_IDS
+    assert "cache_security" not in set(check_ids)
     assert {"tls_certificate_expiry", "tls_certificate_chain", "tls_protocol_config", "http_to_https_redirect", "redirect_destination_safety"} <= set(check_ids)
-    assert report["summary"]["total"] == 24
+    assert report["summary"]["total"] == 26
 
 
 def test_expanded_findings_are_not_verified_without_response(monkeypatch):
@@ -102,11 +129,11 @@ def test_expanded_findings_are_not_verified_without_response(monkeypatch):
     expanded_findings = [
         item
         for item in report["findings"]
-        if item["check_id"] in EXPANDED_CHECK_IDS
+        if item["check_id"] in WEEK3_EXPANDED_CHECK_IDS
     ]
 
-    assert len(report["findings"]) == 24
-    assert len(expanded_findings) == 14
+    assert len(report["findings"]) == 26
+    assert len(expanded_findings) == 18
     assert all(
         item["status"] == "not_verified"
         for item in expanded_findings

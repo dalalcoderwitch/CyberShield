@@ -100,6 +100,19 @@ If the DNS lookup exceeds the wait limit, the target is rejected.
 If the lookup fails or returns an unacceptable result, the scanner
 must not continue with the HTTP request.
 
+At the scanner/report layer, DNS outcomes are distinguished:
+
+- `dns_timeout`: the DNS caller wait limit expires.
+- `dns_error`: DNS resolution fails or returns an empty result.
+- `dns_capacity`: no DNS lookup slot is available.
+- `invalid`: the URL or resolved destination violates target policy.
+- `timeout`: the overall scan deadline expires.
+
+These detailed outcomes are currently engine/report classifications.
+The Flask integration still uses the backward-compatible resolver
+that returns a target or None. Mapping the detailed DNS outcomes to
+distinct API responses requires coordinated API-layer work and review.
+
 The timeout wrapper cannot forcibly cancel an operating-system
 `getaddrinfo` operation. A DNS lookup that exceeds the wait limit
 may continue in the background and hold its lookup slot until it
@@ -330,6 +343,29 @@ applicable.
 The report must clearly state that it represents a limited,
 preliminary assessment.
 
+### Severity and Confidence
+
+`severity` describes the potential security impact of an observation,
+not whether the check executed successfully.
+
+- `info`: informational or operational context; no weakness is established.
+- `low`: a hardening observation with limited potential impact.
+- `medium`: a security configuration observation whose impact depends on context.
+- `high`: a potentially significant impact requiring clear evidence and defined criteria.
+
+`high` is allowed by the result contract but is not currently assigned
+by the five foundational checks.
+
+`confidence` describes the strength of the supporting evidence:
+
+- `low`: limited evidence or insufficient basis for a strong conclusion.
+- `medium`: direct evidence exists, but interpretation or coverage is limited.
+- `high`: clear, direct evidence supports the specific condition evaluated.
+
+Severity and confidence must remain independent from finding status.
+Neither value changes the meaning of `passed`, `warning`,
+`not_verified`, `error`, or `skipped`.
+
 ## 11. Testing and Verification
 
 Automated tests should cover at least:
@@ -340,7 +376,7 @@ Automated tests should cover at least:
 - URLs containing credentials.
 - Localhost and prohibited IP addresses.
 - IPv4, IPv6, and relevant special-purpose address cases.
-- DNS failures, empty results, excessive results, and timeouts.
+- DNS failures, empty and excessive results, simulated DNS timeouts, and DNS-capacity exhaustion.
 - Connection pinning and hostname verification.
 - TLS certificate validation, including untrusted certificates.
 - Redirect behavior.
@@ -357,6 +393,8 @@ environment.
 Local TLS tests provide useful regression coverage, but do not
 replace controlled integration testing or a deployment security
 review.
+
+One local TLS regression test also records the SNI values received by the test server for matching and mismatching hostnames. This verifies SNI in that controlled local handshake, not the complete scanner path from DNS validation to the pinned socket connection.
 
 DNS timeout tests that simulate a slow lookup must not be treated
 as proof that the operating system can forcibly cancel a real

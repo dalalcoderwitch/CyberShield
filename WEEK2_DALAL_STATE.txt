@@ -1,0 +1,243 @@
+CYBERSHIELD - DALAL WEEK 2 STATE
+
+Owner: Dalal
+Scope: Python security scanner only
+Branch: feature/dalal-sni-verification
+Repository: C:\Users\ASUS\CyberShield
+
+Verified baseline before Codex:
+- Scanner suite: 96 passed.
+- Full project suite: 298 passed in 3.00s.
+- DNS suite: 27 passed.
+- New test: test_dns_concurrency_is_limited_to_four.
+
+Day 1 review:
+- URL and DNS validation reviewed.
+- IPv4/IPv6 and SSRF protections reviewed.
+- DNS result cap: 32.
+- DNS concurrency cap: 4, including direct concurrency test.
+- Fifth DNS operation rejected with dns_capacity.
+- DNS semaphore slots released after worker completion.
+- DNS timeout uses remaining scan deadline.
+- Validated IP pinning and TLS hostname/SNI preservation tested.
+- TLS verification enabled.
+- Automatic redirects disabled and tested.
+- Response body not read by scanner; streaming enabled.
+- Response/session cleanup tested on success and errors.
+- Excessive HTTP headers rejected by the HTTP parser.
+- Header-size cap is library/parser enforced, not a dedicated scanner setting.
+- Timed-out getaddrinfo worker may continue until the OS resolver returns;
+  its semaphore slot remains held until actual completion.
+
+Initial baseline note (superseded by the Codex milestone below): no Codex modifications had been made at that point.
+No Git mutations, commits, or pushes are permitted.
+
+Continue reviewing Week 2 scanner-only acceptance criteria.
+Do not modify teammate-owned files.
+Codex Week 2 milestone (2026-11-07):
+- Reviewed scanner URL/DNS/SSRF/TLS/redirect/deadline/resource cleanup behavior and existing tests; preserved all pre-existing working-tree changes.
+- Concrete gap fixed: an explicit empty port (for example, https://example.com:) was accepted because urllib.parse reports parsed.port as None. Target validation now rejects a netloc ending in a colon. Added this malformed URL to the existing no-DNS regression parameterization.
+- Exact files changed by this work: security_scanner/scanner.py; tests/test_scanner.py; WEEK2_DALAL_STATE.txt.
+- Focused command: .\\.venv\\Scripts\\python.exe -B -m pytest -p no:cacheprovider --basetemp="$env:TEMP\\dalal-pytest" tests/test_scanner.py -k malformed_urls_are_rejected_before_dns — 6 passed, 91 deselected.
+- Scanner command: .\\.venv\\Scripts\\python.exe -B -m pytest -p no:cacheprovider --basetemp="$env:TEMP\\dalal-pytest" tests/test_scanner.py — 97 passed.
+- The initially required default-temp command hit PermissionError scanning C:\\Users\\ASUS\\AppData\\Local\\Temp\\pytest-of-ASUS; explicit --basetemp under the system temp directory succeeds. No broader permissions requested.
+- Remaining acceptance criteria: none. Full project suite, permitted-file diff, and foundational check IDs/API contract reviewed in the final verification below.
+- Limitations: DNS OS resolver worker can outlive caller timeout while holding its bounded concurrency slot until actual resolver completion, as recorded above. HTTP header bounds are enforced by Python/urllib3 parser rather than a scanner-owned cap. No external/public targets used.
+
+Codex Week 2 final verification (2026-11-07):
+- Full Scanner suite: .\\.venv\\Scripts\\python.exe -B -m pytest -p no:cacheprovider --basetemp="$env:TEMP\\dalal-pytest" tests/test_scanner.py — 97 passed in 1.46s.
+- Full project suite: .\\.venv\\Scripts\\python.exe -B -m pytest -p no:cacheprovider --basetemp="$env:TEMP\\dalal-pytest" — 299 passed in 2.24s.
+- `git diff --check` completed without whitespace errors (only Git line-ending warnings).
+- Verified the five foundational check IDs remain present in the existing contracts/registry tests and implementation: https_connection, header_hsts, header_csp, header_x_content_type_options, header_x_frame_options.
+- Permitted-file review: this work adds only the trailing-colon invalid-port rejection in security_scanner/scanner.py and its malformed-URL regression case in tests/test_scanner.py. The scanner test file also has a pre-existing working-tree addition for DNS concurrency coverage, retained without alteration. WEEK2_DALAL_STATE.txt records this progress.
+- Other staged/unstaged/untracked changes listed by git status were pre-existing and left untouched. No Git state mutation, commit, or push occurred.
+- Acceptance review: URL input validation, DNS concurrency/timeouts/result limits/address-family checks, non-global and mixed-answer rejection, pinned-IP connection with hostname Host/SNI/certificate verification, redirects disabled, bounded requests timeouts, streaming without consuming the body, parser-enforced header limits, response/session cleanup, and preserved check IDs/contracts are covered by current implementation/tests.
+- Explicit limitation: a system getaddrinfo worker may continue past caller timeout and retain its semaphore slot until the OS resolver returns. Header-size limits rely on the Python/urllib3 HTTP parser rather than a scanner-specific configured cap. These are documented and unchanged; no safe scanner-only adjustment was justified by current evidence.
+- Next action: none; applicable Week 2 scanner work is verified.
+
+Codex resumed verification (2026-11-07):
+- Re-read AGENTS.md and this state file first; reviewed current git status and the permitted scanner/test diff. Existing scanner fix and coverage were already complete; no additional code change was warranted.
+- Scanner suite rerun: .\\.venv\\Scripts\\python.exe -B -m pytest -p no:cacheprovider --basetemp="$env:TEMP\\dalal-pytest" tests/test_scanner.py — 97 passed in 1.53s.
+- Full project suite rerun: .\\.venv\\Scripts\\python.exe -B -m pytest -p no:cacheprovider --basetemp="$env:TEMP\\dalal-pytest" — 299 passed in 2.14s.
+- The explicit pytest basetemp remains necessary because the default pytest temp-directory scan previously failed with PermissionError; no permission escalation was attempted.
+- Remaining tasks: none for Dalal Week 2. Known limitations remain as listed above. No unrelated files were modified; no Git state-changing command, commit, or push occurred.
+
+Codex independent Week 2 audit checkpoint (2026-11-07):
+- Read AGENTS.md, the current state file, and the read-only project-scope.md, security-policy.md, and test-plan.md. Compared each scanner requirement with current scanner.py and scanner tests rather than relying on prior completion claims.
+- Independently verified: URL schemes/credentials/ports/control chars/length and IDNA normalization; explicit empty-port rejection; IPv4/IPv6 family consistency, max 32 DNS records, four DNS slots and timeout/error variants; mixed/non-global/transition IP rejection and no-request-on-rejection; pinned resolved IP with original Host/SNI/certificate hostname and a local integrated socket-peer/SNI/TLS test; redirects disabled; connection/read/remaining total timeout budgets; streaming without body reads; parser rejection of oversized headers; foundational check IDs/status/API/report assertions.
+- New demonstrated defect: if response.close() raised, sequential cleanup skipped session.close(). Changed scanner cleanup to call session.close() in an inner finally and added test_session_closes_when_response_close_raises.
+- Exact files changed in this checkpoint: security_scanner/scanner.py and tests/test_scanner.py. Focused command: .\\.venv\\Scripts\\python.exe -B -m pytest -p no:cacheprovider --basetemp="$env:TEMP\\dalal-pytest" tests/test_scanner.py -k session_closes_when_response_close_raises — 1 passed, 97 deselected.
+- Remaining final actions: run complete scanner and full project suites, then review permitted-file diff and status.
+- Explicit scanner limitations: getaddrinfo cannot be forcibly cancelled and may hold its slot after caller timeout; Requests/urllib3 read timeouts plus the shared deadline are checked-stage bounds, not a strict hard cancellation of a slow-drip operation; header bounds come from the HTTP parser. Test-plan asks for expired-certificate and more slow/chunked-response cases; there is no certificate-generation dependency/tool in this environment (cryptography/OpenSSL unavailable), and scanner does not consume response bodies, so these are recorded as deferred coverage rather than adding environment-dependent tests or dependencies.
+- Coordination/deployment-only tasks identified in the read-only docs and not performed: Flask API mapping of detailed DNS statuses and global/per-process limits, API/report contract coordination, multi-worker controls, deployment egress/hosting/rate limits and operational review. These are outside Dalal's strict file ownership.
+
+Codex independent audit final verification (2026-11-07):
+- Focused cleanup regression: .\\.venv\\Scripts\\python.exe -B -m pytest -p no:cacheprovider --basetemp="$env:TEMP\\dalal-pytest" tests/test_scanner.py -k session_closes_when_response_close_raises — 1 passed, 97 deselected.
+- Full Scanner suite: .\\.venv\\Scripts\\python.exe -B -m pytest -p no:cacheprovider --basetemp="$env:TEMP\\dalal-pytest" tests/test_scanner.py — 98 passed in 1.33s.
+- Full project suite: .\\.venv\\Scripts\\python.exe -B -m pytest -p no:cacheprovider --basetemp="$env:TEMP\\dalal-pytest" — 300 passed in 2.35s.
+- Reviewed permitted diffs: scanner cleanup now nests response closure in try/finally to guarantee session closure; the matching exception-path test is new. Earlier empty-port fix/test remain. Existing DNS-concurrency test addition was already present before this audit and is preserved.
+- `git diff --check` has no whitespace errors. Git status has no newly changed paths outside the allowed three; pre-existing teammate and untracked changes are unchanged. No Git state-changing commands, commit, or push were run.
+- Completed Dalal scanner checklist; remaining items are only explicitly deferred/environment-sensitive coverage and coordination/deployment tasks listed above. No next scanner code action is justified.
+
+Audit follow-up (2026-11-07):
+- Resolved the expired-certificate test-plan item without installing packages: generated a static expired localhost certificate/key using the available .NET cryptography APIs, then added test_real_tls_rejects_expired_certificate using only a local loopback TLS server. It verifies scanner result error=tls and confirms no HTTP request reached the handler.
+- Focused command: .\\.venv\\Scripts\\python.exe -B -m pytest -p no:cacheprovider --basetemp="$env:TEMP\\dalal-pytest" tests/test_scanner.py -k real_tls_rejects_expired_certificate — 1 passed, 98 deselected.
+- The earlier note that expired-certificate coverage was deferred for lack of a generation tool is superseded by this successful test.
+- Body transfer-encoding / misleading Content-Length cases do not change scanner resource behavior: Requests is used with stream=True, only status/headers are read, and response is closed without reading body content. Existing test_response_body_is_not_read_and_response_is_closed asserts content/raw/iter_content are never accessed; real local TLS tests also use responses without Content-Length. A separate chunked-body test is not justified absent any body consumer.
+- Remaining: rerun scanner/full suites after the expired-cert test and review final diff.
+
+Codex final acceptance verification (2026-11-07):
+- Focused expired-certificate test: .\\.venv\\Scripts\\python.exe -B -m pytest -p no:cacheprovider --basetemp="$env:TEMP\\dalal-pytest" tests/test_scanner.py -k real_tls_rejects_expired_certificate — 1 passed, 98 deselected.
+- Final complete scanner suite: .\\.venv\\Scripts\\python.exe -B -m pytest -p no:cacheprovider --basetemp="$env:TEMP\\dalal-pytest" tests/test_scanner.py — 99 passed in 1.29s.
+- Final full project suite: .\\.venv\\Scripts\\python.exe -B -m pytest -p no:cacheprovider --basetemp="$env:TEMP\\dalal-pytest" — 301 passed in 2.00s.
+- Final permitted-file diff reviewed; `git diff --check` clean aside from Windows line-ending notices. Changed paths from Dalal work are scanner.py, tests/test_scanner.py, and WEEK2_DALAL_STATE.txt. Existing teammate-owned changes remain untouched.
+- Final deferred limitations: system getaddrinfo cannot be cancelled and retains a slot until it returns; Requests/urllib3 deadlines are bounded/read-timeout based and cannot guarantee hard cancellation of slow-drip operations; HTTP header-size limits rely on parser enforcement. Actual OS resolver and controlled slow-network deadline behavior remain environment/deployment verification tasks.
+- Coordination-only tasks from read-only project docs remain outside this scanner ownership: API error/status mapping and report/API coordination, multi-process/shared concurrency or rate limits, deployment hosting/egress/monitoring and operational review. No Flask, Flutter, Android, docs or teammate changes were made. No Git state-changing command, commit, or push occurred.
+- Dalal scanner acceptance checklist complete; no further scanner code change is warranted.
+
+Post-review final rerun (2026-11-07):
+- After restoring scanner.py's original no-final-newline formatting, the complete scanner suite passed again: .\\.venv\\Scripts\\python.exe -B -m pytest -p no:cacheprovider --basetemp="$env:TEMP\\dalal-pytest" tests/test_scanner.py — 99 passed in 1.30s.
+- The complete project suite passed again: .\\.venv\\Scripts\\python.exe -B -m pytest -p no:cacheprovider --basetemp="$env:TEMP\\dalal-pytest" — 301 passed in 2.10s.
+- No further scanner changes remain.
+
+FINAL DALAL WEEK 2 COMPLETION REPORT (2026-11-07)
+
+Scope and completed scanner tasks:
+- Audited URL parsing and validation: HTTPS scheme, credentials, ports, malformed inputs, hostname normalization, and the explicit empty-port case. Empty explicit ports are rejected before DNS.
+- Verified DNS behavior: IPv4/IPv6 handling and address-family consistency, a 32-result limit, four concurrent lookup slots, timeout/error classification, and slot release after workers complete.
+- Verified SSRF controls: loopback, private, link-local, reserved/transition and other non-global addresses are rejected; mixed allowed/disallowed DNS answers reject the target; rejected targets do not trigger HTTP requests.
+- Verified validated-IP pinning while preserving the original Host and TLS hostname, SNI, and certificate verification. Local TLS coverage includes the integrated pinned socket path and an expired certificate rejection.
+- Verified automatic redirects remain disabled and Location targets are not followed.
+- Audited DNS, connect, read, and shared scan deadline propagation and timeout handling.
+- Verified streamed responses are not read for body content, parser-enforced excessive-header limits, and response/session cleanup on success and exception paths.
+- Preserved API/report compatibility, result statuses, and foundational check IDs: https_connection, header_hsts, header_csp, header_x_content_type_options, header_x_frame_options.
+
+Changes in Dalal's permitted files:
+- security_scanner/scanner.py: reject a trailing empty explicit port; guarantee session.close() even if response.close() raises.
+- tests/test_scanner.py: regression coverage for the empty port, response-close cleanup failure, and expired TLS certificate. The existing DNS concurrency coverage was preserved.
+- WEEK2_DALAL_STATE.txt: this report and progress history.
+
+Final test evidence (Python virtual environment, bytecode/cache disabled):
+- Focused close-failure regression: 1 passed.
+- Focused expired-certificate regression: 1 passed.
+- Complete Scanner suite: .\\.venv\\Scripts\\python.exe -B -m pytest -p no:cacheprovider --basetemp="$env:TEMP\\dalal-pytest" tests/test_scanner.py — 99 passed in 1.30s.
+- Full project suite: .\\.venv\\Scripts\\python.exe -B -m pytest -p no:cacheprovider --basetemp="$env:TEMP\\dalal-pytest" — 301 passed in 2.10s.
+- `git diff --check`: no whitespace errors. Explicit --basetemp was needed because pytest's default Windows temp scan returned PermissionError.
+
+Remaining limitations and deferred environment/deployment verification:
+- Python cannot forcibly cancel an operating-system getaddrinfo call; a timed-out worker may continue and hold its DNS slot until the resolver returns.
+- Requests/urllib3 timeouts and deadline propagation do not guarantee hard cancellation of a slow-drip operation.
+- HTTP header limits rely on the Python/urllib3 parser rather than a scanner-owned configurable cap.
+- Real operating-system DNS and production slow-network deadline behavior remain deployment/environment verification tasks. The scanner does not consume response bodies, so separate chunked-body/Content-Length size handling was not applicable to its current behavior.
+- Flask DNS status mapping, API/report coordination, shared multi-process limits, and deployment hosting/egress/monitoring are coordination or deployment responsibilities outside Dalal's scanner ownership.
+
+Ownership and Git confirmation:
+- No Flask, Flutter, Android, documentation, or teammate-owned files were modified by this work. Pre-existing unrelated working-tree changes were preserved.
+- No Git state-changing commands, commit, or push occurred.
+- Dalal Week 2 scanner acceptance work is complete subject to the explicitly listed limitations and coordination/deployment items.
+
+Dalal-only independent plan-to-code verification (2026-11-07):
+- Re-read AGENTS.md, this state, docs/project-scope.md, docs/security-policy.md, docs/test-plan.md, current scanner implementation/tests, and read-only report/API deadline flow. Verified against behavior and assertions; did not use prior completion statements as evidence.
+- Checklist evidence: URL and hostname restrictions/empty port in _resolve_target_with_status and malformed URL tests; DNS caps, family checks, IPv4/IPv6, exception/timeout/capacity and concurrency release tests; SSRF mixed/non-global rejection and no-request tests; pinned IP/original Host/SNI/certificate tests including local socket-peer integration and expired certificate; allow_redirects=False and redirect test; DNS/connect/read/shared deadline tests; stream=True, body-access guard, header parser size/count tests; response/session cleanup including a failing response.close; API/report contract and foundational IDs covered by project tests.
+- Inspected read-only report/API integration: the shared deadline is passed to resolver and HTTP request; API checks deadline after report returns. This is not a hard cancellation of slow-drip synchronous network operations.
+- No additional scanner code changes were warranted in this audit. Only this state file was updated for this audit; previous permitted code/test changes remain as recorded above.
+- Fresh final Scanner suite: .\\.venv\\Scripts\\python.exe -B -m pytest -p no:cacheprovider --basetemp="$env:TEMP\\dalal-pytest" tests/test_scanner.py — 99 passed in 1.42s.
+- Fresh full project suite: .\\.venv\\Scripts\\python.exe -B -m pytest -p no:cacheprovider --basetemp="$env:TEMP\\dalal-pytest" — 301 passed in 2.10s.
+- Remaining scanner limitations: OS getaddrinfo worker cannot be cancelled and can retain a slot until return; sync Requests/urllib3 cannot provide strict hard cancellation of slow-drip responses; header caps rely on the parser. Scanner body is intentionally not consumed, so chunked or false Content-Length does not cause unbounded body reads; body-access and local no-Content-Length response behavior are covered.
+- Coordination-only items (not implemented): API error mapping/report coordination, multi-process/global concurrency and rate limiting, deployment egress, server hosting, operational monitoring and representative production-network validation.
+- Final status/diff review completed. No changes outside security_scanner/scanner.py, tests/test_scanner.py, and WEEK2_DALAL_STATE.txt were made by this work; pre-existing teammate modifications remain. No Git state-changing command, commit, or push occurred.
+
+FINAL GOAL STATUS AND ITEMIZED ACCEPTANCE (2026-11-07)
+
+Final goal status: COMPLETE for Dalal-owned, locally verifiable Week 2 scanner work. Deferred items below are explicit technical limitations or coordination/deployment work outside Dalal's permitted scanner scope; they are not represented as implemented.
+
+Week 2 task checklist:
+1. URL parsing, malformed input, credentials, scheme, ports, hostname normalization — COMPLETE. The empty explicit port regression is fixed and tested.
+2. DNS, IPv4/IPv6, family consistency, answer cap, concurrency and timeout behavior — COMPLETE for scanner logic and deterministic tests. Real OS resolver behavior is deferred because getaddrinfo cannot be forcibly cancelled.
+3. SSRF policy, non-global addresses, mixed DNS results, DNS rebinding resistance — COMPLETE for scanner logic and controlled tests; all DNS answers are checked, and the selected validated IP is pinned.
+4. Validated-IP pinning with original Host, SNI and TLS certificate hostname verification — COMPLETE. Local loopback TLS integration covers the pinned socket peer, SNI and hostname behavior; expired certificate rejection is tested.
+5. Redirect safety — COMPLETE. Automatic redirects remain disabled and Location targets are not followed.
+6. DNS, connect, read and total scan deadlines — COMPLETE for deadline propagation, remaining-budget timeouts and checked-stage handling. HARD cancellation of slow-drip synchronous HTTP operations is DEFERRED/technically unavailable in this Requests/urllib3 execution model; actual slow-network behavior requires controlled deployment testing.
+7. Response/header limits, streaming and bounded resource use — COMPLETE for current scanner behavior. Body is streamed and never consumed; excessive headers are rejected by the HTTP parser. A scanner-owned header cap is not implemented. Separate chunked-body or misleading Content-Length size enforcement is NOT APPLICABLE while no response body is consumed; this relies on preserving that behavior.
+8. Response/session cleanup and DNS worker/slot cleanup — COMPLETE for tested normal and exception paths, including response.close() failure. OS DNS worker termination itself is DEFERRED because the system resolver cannot be cancelled.
+9. Deterministic regression tests for genuine defects — COMPLETE for identified/fixed defects: empty explicit port and session cleanup after response-close failure; expired-certificate coverage added. Existing DNS-concurrency and broader security regression tests were preserved.
+10. Public API/report JSON contract, result statuses and five foundational check IDs — COMPLETE/verified against project tests and current contracts: https_connection, header_hsts, header_csp, header_x_content_type_options, header_x_frame_options.
+
+Changes actually made by Codex within the permitted boundary:
+- security_scanner/scanner.py: reject an explicit empty port; always close the session even when response.close() raises.
+- tests/test_scanner.py: add the empty-port case, response-close cleanup regression, and a local expired-certificate TLS regression. The DNS concurrency test already existed before this work and was not authored in this final audit.
+- WEEK2_DALAL_STATE.txt: progress records and this final report.
+No other files were modified by Codex. Existing unrelated working-tree changes were preserved.
+
+Final test commands and evidence (Python project virtual environment; -B and no pytest cache; explicit basetemp used due Windows Temp PermissionError):
+- Focused cleanup test: .\\.venv\\Scripts\\python.exe -B -m pytest -p no:cacheprovider --basetemp="$env:TEMP\\dalal-pytest" tests/test_scanner.py -k session_closes_when_response_close_raises — 1 passed.
+- Focused expired-certificate test: .\\.venv\\Scripts\\python.exe -B -m pytest -p no:cacheprovider --basetemp="$env:TEMP\\dalal-pytest" tests/test_scanner.py -k real_tls_rejects_expired_certificate — 1 passed.
+- Final Scanner suite: .\\.venv\\Scripts\\python.exe -B -m pytest -p no:cacheprovider --basetemp="$env:TEMP\\dalal-pytest" tests/test_scanner.py — 99 passed in 1.42s.
+- Final full project suite: .\\.venv\\Scripts\\python.exe -B -m pytest -p no:cacheprovider --basetemp="$env:TEMP\\dalal-pytest" — 301 passed in 2.10s.
+- `git diff --check`: no whitespace errors; Git emitted only line-ending notices.
+
+Git and file-boundary review:
+- Read-only `git status --short` showed existing changes in docs, mobile, report/API/check files, deletions and untracked files. These were not modified by Codex. The only Codex-edited paths are the three permitted files listed above.
+- No Git state-changing command was run. No commit or push was performed.
+
+Remaining technical risks / deferred work:
+- A timed-out getaddrinfo daemon worker can continue running and hold its DNS semaphore slot until the OS resolver returns.
+- Requests/urllib3 timeout values and shared deadline propagation do not provide hard cancellation of a slow-drip synchronous operation; real-network deadline characterization remains deferred.
+- Header bounds depend on Python/urllib3 parser defaults rather than a scanner-configured cap.
+- Coordination-only/out-of-scope work: Flask API mapping of detailed DNS statuses and report/API alignment; shared multi-process concurrency/rate limits; deployment hosting, egress isolation, monitoring and representative production validation. No Bailsan Flask/API or Ahmad Flutter/Android work was performed.
+- No public target was scanned and no dependencies were installed or changed.
+
+WEEK 3 PREPARATION
+==================
+
+Preparation status: READ-ONLY AUDIT COMPLETE; implementation intentionally not started. Active permissions are dalal-week2. No source files, test files, docs, teammate files, or Git state were changed. Only this state file is being updated. No tests were run because this checkpoint is a read-only implementation audit and no code was changed.
+
+References reviewed:
+- docs/project-scope.md (original project scope and five foundational findings)
+- docs/security-policy.md
+- docs/test-plan.md
+- docs/api-contract.md (draft; says pending team review/approval)
+- docs/week-1-summary.md
+- docs/week-2-review.md
+- Current Registry, Contracts, Evaluators, Response Runner, report, scanner, and check/report tests.
+- No Week 3 plan document exists in the repository file list or exact Week 3/check-ID searches. This preparation therefore uses the five Week 3 check IDs and decision requests supplied in the current user instruction, plus the project documents above. If a separate Week 3 plan was shared outside the repository, it was not available in the workspace during this audit.
+
+Foundational checks review:
+- https_connection, header_hsts, header_csp, header_x_content_type_options, and header_x_frame_options are actual existing checks, not planned-only entries. Registry marks all five foundational/implemented; scanner/report contain their execution/evaluation paths; tests/test_report.py asserts finding IDs and statuses. Do not reimplement these in Week 3.
+
+Week 3 check audit table:
+
+| Check | Actual state | Evidence currently collected | Existing coverage / missing coverage | Likely future files (subject to Week 3 permissions/ownership) | Required controlled local integration tests |
+|---|---|---|---|---|---|
+| tls_certificate_expiry | NOT IMPLEMENTED; Registry says expanded/planned. Contract metadata requires certificate_not_before and certificate_not_after, but no collector/evaluator/runner uses them. | No certificate dates are exposed in CheckContext/EvidenceCollection or report. Contract names dates only. | Registry/contract metadata tests only. No expiry evaluator or finding tests. Week 2 has a local expired-certificate rejection test for foundational HTTPS; it does not produce an expiry finding or near-expiry classification. | scanner.py or a new TLS metadata collector; checks/context.py and evidence.py; new checks/tls_checks.py evaluator; response_runner.py or a dedicated TLS evaluator runner; report.py integration; tests for evaluator, runner, report, and TLS collection. | Loopback TLS servers using deterministic expired, valid, and near-expiry certificate fixtures; verify dates/timezone, evidence sanitization, status and boundary conditions. Requires approved near-expiry threshold first. |
+| tls_certificate_chain | NOT IMPLEMENTED; Registry says expanded/planned. Contract requires peer_certificate and certificate_chain only. | No peer certificate/chain is collected into check evidence. Requests TLS verification establishes whether a connection is trusted, but the scanner does not expose the chain for a separate finding. | Only Registry/contract metadata tests; no chain evaluator, runner, or report tests. Existing TLS tests cover trust/hostname rejection and an expired cert, not chain evidence reporting. | scanner.py or TLS metadata collector; checks/context.py and evidence.py; checks/tls_checks.py; response runner; report integration; focused chain tests and report contract tests. | Local CA/intermediate/leaf chains covering complete trusted chain, missing intermediate, wrong issuer, and untrusted root; confirm validation and reported evidence without public network. Team must define whether this finding duplicates the foundational connection failure or reports only chain details after accepted TLS. |
+| tls_protocol_config | NOT IMPLEMENTED; Registry says expanded/planned. Contract expects negotiated_tls_version and cipher_suite. | No negotiated version or cipher suite is recorded. | Only Registry/contract metadata tests; no policy evaluator or report tests. | TLS collector in scanner.py or dedicated module; checks/context.py and evidence.py; checks/tls_checks.py; runner/report integration; tests. | Loopback TLS servers configured for protocol/cipher variants; assert observed negotiated protocol/cipher and finding status at supported boundaries. Exact minimum protocol and cipher policy require team approval. |
+| http_to_https_redirect | NOT IMPLEMENTED; Registry says expanded/planned. Contract expects http_redirect_status and location_header via bounded_http_probe. | No HTTP probe is performed and no redirect status/Location evidence is collected. Existing scanner accepts HTTPS only and automatic redirects are disabled. | Contract test only verifies that this check is labeled as requiring bounded_http_probe. There is no probe executor, evaluator, report test, or scanner behavior test for this check. Existing HTTPS redirect test verifies no automatic follow and must remain intact. | New bounded probe/collector in scanner-owned layer; likely scanner.py or a dedicated probe module; evidence/context additions; checks redirect evaluator; a probe runner (current response_runner handles only shared response prototypes); report integration and contract tests. Flask/API orchestration is Bailsan coordination. | Local HTTP and HTTPS loopback fixtures. Verify the initial HTTP observation, expected status/Location rules, timeout/budget, no automatic redirect follow, and no weakening of HTTPS target validation. Test ports through injectable local endpoint configuration rather than public targets. |
+| redirect_destination_safety | NOT IMPLEMENTED; Registry says expanded/planned. Contract expects redirect_location and destination_policy_result via bounded_http_probe. | No redirect Location is parsed or destination-policy result produced for a finding. Initial HTTPS requests do not follow redirects. | Contract metadata only; no evaluator, destination-validation runner, or report tests. Existing test_redirect_is_not_followed covers no-follow behavior only, not destination classification. | Safe Location parser/validator in scanner-owned layer; evidence/context; redirect evaluator; bounded probe/validation runner; report integration; tests for relative/absolute targets, malformed values, credentials, schemes/ports, DNS answers, and no-connect behavior. Keep policy logic separate from automatic following. | Local HTTPS source returning controlled Location values (same-origin, relative, external fixture hostname, private/loopback IP, credentials, unsupported scheme/port, malformed). Mock DNS deterministically or use loopback-only fixtures; assert destination validation occurs as approved and no Location target is automatically contacted. |
+
+Implementation architecture findings:
+- Registry metadata is not execution: all five IDs exist in EXPANDED_CHECK_DEFINITIONS with implementation_status="planned".
+- Contracts metadata exists for all five IDs and names the expected evidence fields and collection modes. The contract tests only validate metadata/allowed modes.
+- CheckContext currently contains sanitized HTTPS origin, deadline, HTTP status, connection error and response headers. EvidenceCollection snapshots only HTTP status and bounded headers. Neither can carry TLS handshake metadata or redirect-probe evidence.
+- Existing concrete evaluators are header/cache evaluators. response_runner.py runs only header_referrer_policy, header_permissions_policy, and cache_security from one shared response snapshot. It does not run any of the five Week 3 checks and does no TLS collection or additional HTTP probe.
+- report.py currently integrates the five foundational checks and optional response prototypes; the five Week 3 IDs do not appear in its execution paths.
+- CheckDefinition currently enforces that expanded checks remain planned. Registry tests assert all 25 expanded checks are planned. Implementing only five requires an explicit architecture decision about implementation_status semantics and associated base/registry tests; do not silently change this invariant.
+- Keep the foundational HTTPS request on validated HTTPS/443 with certificate verification and redirects disabled. Any future HTTP probe or destination validation requires an explicit separate policy and bounded collector; do not relax the existing HTTPS request policy.
+
+Team decisions requiring documented approval (no values found in reviewed project documents):
+1. Certificate near-expiry threshold: number of days before notAfter that changes status/severity. No threshold is selected here.
+2. Minimum accepted TLS protocol version and any cipher policy for tls_protocol_config. No TLS floor is selected here.
+3. HTTP-to-HTTPS policy: whether/how a separate plaintext HTTP probe is allowed, what ports/status codes/Location forms count, whether to probe the original path or origin only, how DNS/IP pinning and SSRF controls apply, and how to report no redirect or a failed HTTP probe. Current HTTPS-only policy and allow_redirects=False must remain unchanged until approval.
+4. Redirect destination safety semantics: whether evaluate-only DNS/policy classification is sufficient, allowed destination schemes/ports, relative Location resolution, and whether a destination validation result can ever be considered safe without connecting. It must not cause automatic following.
+5. Finding statuses/severity for unavailable TLS metadata, invalid chains, expired/near-expiry certs, weak protocol negotiation, and probe failures; preserve existing result schema/status values.
+
+Ownership split (planning only; nothing implemented):
+- Dalal: scanner-layer TLS handshake metadata collection; bounded and policy-safe redirect probe/destination validation; five evaluators and evidence plumbing; deterministic unit and local loopback integration tests; coordinate required report-contract details.
+- Bailsan (Flask/API): API request/response exposure, scan-budget and capacity behavior for additional probes, error/status mapping and backward-compatible JSON integration. Not performed here.
+- Ahmad (Flutter/Android): client models, display, Arabic/localized text and UI tests for approved findings. Not performed here.
+- Team review: approve threshold/protocol/HTTP-probe/redirect semantics and ownership of report/schema changes before implementation.
+
+Required future file permissions before Week 3 coding:
+- Dalal scanner/evidence/evaluation candidates: security_scanner/scanner.py; security_scanner/checks/base.py; registry.py; contracts.py; context.py; evidence.py; a new TLS/redirect evaluator module; response_runner.py or new bounded probe runner; security_scanner/report.py only if report ownership/permission is explicitly granted.
+- Tests: tests/test_scanner.py and relevant/new tests under tests/test_check_*.py and report/API compatibility tests only under the corresponding owner's approval.
+- Current dalal-week2 permission does not authorize edits to these Week 3 architecture/test files. This report changes no source or tests. Stop here pending Week 3 permission and team decisions.

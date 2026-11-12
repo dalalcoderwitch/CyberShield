@@ -191,8 +191,13 @@ _CONTRACT_ITEMS = (
     ),
     _contract(
         "open_redirect",
-        ("controlled_redirect_probe", "redirect_location"),
-        "bounded_http_probe",
+        (
+            "http_status",
+            "redirect_location_values",
+            "redirect_evidence_available",
+            "redirect_request_url",
+        ),
+        "shared_http_response",
     ),
 
     # Disclosure.

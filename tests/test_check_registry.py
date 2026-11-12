@@ -1,4 +1,4 @@
-﻿from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError
 
 import pytest
 
@@ -30,6 +30,38 @@ def test_default_registry_contains_30_unique_checks():
     assert len(ids) == len(set(ids))
 
 
+EXPECTED_IMPLEMENTED_EXPANDED_IDS = {
+    "cookie_httponly",
+    "cookie_samesite",
+    "cookie_secure",
+    "cors_misconfiguration",
+    "directory_listing",
+    "dns_dmarc",
+    "dns_spf",
+    "dnssec",
+    "error_information_disclosure",
+    "header_permissions_policy",
+    "header_referrer_policy",
+    "http_to_https_redirect",
+    "open_redirect",
+    "public_security_files",
+    "redirect_destination_safety",
+    "sensitive_file_exposure",
+    "server_information_disclosure",
+    "source_maps_exposure",
+    "tls_certificate_chain",
+    "tls_certificate_expiry",
+    "tls_protocol_config",
+}
+
+EXPECTED_WEEK4_PLANNED_IDS = {
+    "cache_security",
+    "sqli_passive_indicators",
+    "subdomain_takeover_indicators",
+    "xss_passive_indicators",
+}
+
+
 def test_default_registry_has_correct_phases_and_statuses():
     registry = create_default_registry()
 
@@ -43,10 +75,54 @@ def test_default_registry_has_correct_phases_and_statuses():
         item.implementation_status == "implemented"
         for item in foundational
     )
-    assert all(
-        item.implementation_status == "planned"
-        for item in expanded
-    )
+
+    expanded_implemented = {
+        item.check_id for item in expanded
+        if item.implementation_status == "implemented"
+    }
+    expanded_planned = {
+        item.check_id for item in expanded
+        if item.implementation_status == "planned"
+    }
+
+    assert expanded_implemented == EXPECTED_IMPLEMENTED_EXPANDED_IDS
+    assert expanded_planned == EXPECTED_WEEK4_PLANNED_IDS
+    assert len(expanded_implemented) == 21
+    assert len(expanded_planned) == 4
+
+
+def test_expanded_check_definition_accepts_both_lifecycle_statuses():
+    for status in ("implemented", "planned"):
+        definition = CheckDefinition(
+            f"custom_{status}",
+            "Custom check",
+            "passive",
+            "expanded",
+            status,
+        )
+        assert definition.implementation_status == status
+
+
+def test_foundational_check_definition_rejects_planned_status():
+    with pytest.raises(ValueError, match="Foundational checks must be marked"):
+        CheckDefinition(
+            "custom_foundational",
+            "Custom foundational check",
+            "passive",
+            "foundational",
+            "planned",
+        )
+
+
+def test_check_definition_rejects_unsupported_implementation_status():
+    with pytest.raises(ValueError, match="Unsupported implementation_status"):
+        CheckDefinition(
+            "custom_invalid_status",
+            "Custom check",
+            "passive",
+            "expanded",
+            "unknown",
+        )
 
 
 @pytest.mark.parametrize(
@@ -166,15 +242,4 @@ def test_check_definition_rejects_unsupported_category():
             "unknown",
             "expanded",
             "planned",
-        )
-
-
-def test_check_definition_rejects_phase_status_mismatch():
-    with pytest.raises(ValueError, match="must remain planned"):
-        CheckDefinition(
-            "bad_status_check",
-            "Bad status",
-            "passive",
-            "expanded",
-            "implemented",
         )

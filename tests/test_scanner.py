@@ -1535,8 +1535,8 @@ Sydvx0FeNWmqPBhmlaj0SqH0
         )
         redirect_findings = {item["check_id"]: item for item in redirect_report["findings"]}
         assert redirect_findings["open_redirect"]["status"] == "warning"
-        assert len(redirect_report["findings"]) == 24
-        assert redirect_report["summary"]["total"] == 24
+        assert len(redirect_report["findings"]) == 26
+        assert redirect_report["summary"]["total"] == 26
         assert "redirect.example" not in repr(redirect_report["findings"])
         assert options_seen["count"] == 2
         assert len(disclosure_requests) == 24
@@ -1553,7 +1553,7 @@ Sydvx0FeNWmqPBhmlaj0SqH0
         assert error_findings["error_information_disclosure"]["status"] == "warning"
         assert "private.py" not in repr(error_report["findings"])
         assert "SQLSTATE" not in repr(error_report["findings"])
-        assert len(error_report["findings"]) == error_report["summary"]["total"] == 24
+        assert len(error_report["findings"]) == error_report["summary"]["total"] == 26
         assert len(disclosure_requests) == 35
         assert requests_seen["count"] == 42
         error_mode["enabled"] = False
