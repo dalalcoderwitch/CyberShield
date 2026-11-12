@@ -99,13 +99,15 @@ class _ScriptObserver(HTMLParser):
         self.in_script = False
         self.active_script = False
         self.ignored_depth = 0
+        self.ignored_tags = []
         self.parts = []
         self.found = False
         self.unsupported = False
 
     def handle_starttag(self, tag, attrs):
         if tag in {"template", "noscript"}:
-            self.ignored_depth += 1
+            self.ignored_tags.append(tag)
+            self.ignored_depth = len(self.ignored_tags)
         if tag != "script":
             return
         self.in_script = True
@@ -125,7 +127,12 @@ class _ScriptObserver(HTMLParser):
 
     def handle_endtag(self, tag):
         if tag in {"template", "noscript"}:
-            self.ignored_depth = max(0, self.ignored_depth - 1)
+            if self.ignored_tags and self.ignored_tags[-1] == tag:
+                self.ignored_tags.pop()
+                self.ignored_depth = len(self.ignored_tags)
+            else:
+                # An unrelated closing tag must not activate inert content.
+                self.unsupported = True
         if tag != "script" or not self.in_script:
             return
         if self.active_script:

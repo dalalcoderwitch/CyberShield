@@ -6,7 +6,7 @@ resolver may itself retry or follow aliases. NXDOMAIN is an unverified resolver
 observation, not proof that a third-party resource can be registered.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import ipaddress
 import math
 import time
@@ -22,6 +22,10 @@ import dns.resolver
 
 from .dns_checks import _normalize_domain, _DNS_TXT_LOOKUP_SLOTS, _DNS_TXT_TIMEOUT_SECONDS
 from .result import CheckResult
+from .provider_catalog import (
+    PROVIDER_CATALOG_VERSION, ProviderObservation,
+    classify_cname_providers, describe_provider_observation,
+)
 
 
 # Reuse the existing DNS evidence count bound, applied after message parsing.
@@ -38,6 +42,7 @@ class TakeoverEvidence:
 
     query_state: str
     cname_count: int = 0
+    provider: ProviderObservation = field(default_factory=ProviderObservation)
 
     def __post_init__(self):
         if self.query_state not in _STATES:
@@ -48,6 +53,12 @@ class TakeoverEvidence:
             raise ValueError("Dangling evidence requires an attributable CNAME chain")
         if self.query_state not in {"dangling", "resolved", "nodata"} and self.cname_count:
             raise ValueError("This state cannot retain a CNAME count")
+        if not isinstance(self.provider, ProviderObservation):
+            raise TypeError("Expected sanitized provider observation")
+        if self.provider.state != "unobserved" and (
+            not self.cname_count or self.query_state not in {"dangling", "resolved", "nodata"}
+        ):
+            raise ValueError("Provider classification requires an attributable CNAME chain")
 
 
 def _owner(name):
@@ -106,23 +117,25 @@ def _interpret_response(message, hostname):
             # DNAME/synthesized or otherwise unsupported chains stay inconclusive.
             return unknown
 
-    terminal, visited = hostname, set()
+    terminal, visited, destinations = hostname, set(), []
     while terminal in links:
         if terminal in visited:
             return unknown
         visited.add(terminal)
         terminal = links[terminal]
+        destinations.append(terminal)
     if len(visited) != len(links) or terminal in visited:
         return unknown
     if any(owner != terminal for owner in address_owners):
         return unknown
+    provider = classify_cname_providers(destinations)
     if code == dns.rcode.NXDOMAIN:
         if address_owners:
             return unknown
-        return TakeoverEvidence("dangling", len(visited)) if visited else TakeoverEvidence("no_cname")
+        return TakeoverEvidence("dangling", len(visited), provider) if visited else TakeoverEvidence("no_cname")
     if address_owners:
-        return TakeoverEvidence("resolved", len(visited))
-    return TakeoverEvidence("nodata", len(visited))
+        return TakeoverEvidence("resolved", len(visited), provider)
+    return TakeoverEvidence("nodata", len(visited), provider)
 
 
 def collect_takeover_evidence(hostname, deadline=None):
@@ -205,6 +218,7 @@ def evaluate_takeover_evidence(evidence):
         observation = "No terminal A records were observed; NODATA is not NXDOMAIN."
     elif state == "no_cname":
         observation = "NXDOMAIN was observed without an attributable CNAME chain; no dangling-CNAME conclusion follows."
+    observation += " " + describe_provider_observation(evidence.provider)
     return CheckResult(
         check_id="subdomain_takeover_indicators", title="Passive subdomain takeover indicators",
         status=status, severity=severity, confidence="low", evidence=observation,
@@ -218,6 +232,8 @@ def evaluate_takeover_evidence(evidence):
             "No provider-name match alone proves abandonment; raw DNS names and exception details are omitted.",
             "CNAME/record processing is capped at 100 records after parsing; unknown chains remain inconclusive.",
             "Only resolver/parser-returned records are inspected; data already normalized or discarded by them is unavailable.",
+            f"Offline provider-domain catalog version {PROVIDER_CATALOG_VERSION}; recognized domains do not prove service ownership or abandonment.",
+            "Provider-specific resource error evidence is not collected or verified; resource configuration and claimability remain not_verified.",
         ),
     )
 
