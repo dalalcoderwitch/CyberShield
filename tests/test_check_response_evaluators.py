@@ -1001,7 +1001,7 @@ def test_passive_sql_uses_only_attributable_sanitized_categories(patterns, statu
     from security_scanner.checks.evidence import EvidenceCollection
     from security_scanner.checks.disclosure_evidence import DisclosureEvidence
     result = evaluate_passive_evidence(EvidenceCollection(http_status=status,
-        disclosure_evidence=DisclosureEvidence(error_status=original, error_patterns=patterns)))[1]
+        disclosure_evidence=DisclosureEvidence(error_status=original, error_sample_complete=True, error_patterns=patterns)))[1]
     assert result.status == expected
     assert result.confidence == "low"
     assert result.severity == ("low" if expected == "warning" else "info")

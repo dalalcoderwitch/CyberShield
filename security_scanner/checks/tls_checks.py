@@ -44,6 +44,10 @@ class TLSMetadataEvaluator(CheckEvaluator):
         version, cipher = md.get("version"), md.get("cipher")
         if not isinstance(version, str) or not isinstance(cipher, str):
             return self._not_verified_result(self.definition.title, "بيانات الإصدار ومجموعة التشفير الفعلية غير متاحة.")
+        if version not in {"SSLv3", "TLSv1", "TLSv1.0", "TLSv1.1", "TLSv1.2", "TLSv1.3"}:
+            return self._not_verified_result(
+                self.definition.title, "Observed TLS version is unsupported by the approved classification; no version weakness was inferred.",
+            )
         name = cipher.upper().replace("-", "_")
         name = name.replace("AES128", "AES_128").replace("AES256", "AES_256")
         if version not in ("TLSv1.2", "TLSv1.3"):

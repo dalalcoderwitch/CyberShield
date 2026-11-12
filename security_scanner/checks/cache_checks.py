@@ -1,6 +1,8 @@
 """Evidence-only evaluator for HTTP cache directives."""
 
 import re
+from dataclasses import replace
+from email.utils import parsedate_to_datetime, format_datetime
 
 from .evaluator import CheckEvaluator
 from .result import CheckResult
@@ -84,10 +86,86 @@ def _cache_directives(values):
     return directives, None
 
 
+def _http_date(values):
+    """Conservative single IMF-fixdate parsing; never echo a supplied value."""
+    if len(values) != 1:
+        return None
+    try:
+        value = values[0].strip()
+        parsed = parsedate_to_datetime(value)
+        if parsed.tzinfo is None or format_datetime(parsed, usegmt=True) != value:
+            return None
+        return parsed
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def _cache_response_context(evidence):
+    """Fixed descriptive categories; context never establishes sensitivity."""
+    observations = []
+    pragma = evidence.values_for_header("pragma")
+    if pragma:
+        observations.append(
+            "Pragma was observed; response Pragma is not a reliable replacement for Cache-Control or no-store."
+        )
+    else:
+        observations.append("No response Pragma was observed.")
+
+    expires = evidence.values_for_header("expires")
+    expiry_date = _http_date(expires)
+    response_date = _http_date(evidence.values_for_header("date"))
+    directives, ambiguity = _cache_directives(evidence.values_for_header("cache-control"))
+    if not expires:
+        observations.append("No Expires was observed; freshness is not established.")
+    elif expiry_date is None:
+        observations.append("Expires was invalid, duplicated or outside supported date syntax; no freshness conclusion.")
+    elif ambiguity is None and any(name in directives for name in ("max-age", "s-maxage")):
+        observations.append("Expires is a valid date; applicable max-age/s-maxage takes precedence over Expires.")
+    elif response_date is None:
+        observations.append("Expires is a valid date but no reliable response Date comparison is available.")
+    elif expiry_date <= response_date:
+        observations.append("Expires is not later than the response Date; this does not prohibit storage.")
+    else:
+        observations.append("Expires is later than the response Date; current age and actual reuse were not measured.")
+
+    vary = evidence.values_for_header("vary")
+    fields = [part.strip().lower() for value in vary for part in value.split(",")]
+    if not vary:
+        observations.append("No Vary was observed; variant segregation remains unverified.")
+    elif not fields or any(not field or (field != "*" and not _TOKEN.fullmatch(field)) for field in fields):
+        observations.append("Vary syntax is ambiguous or invalid; no cache-key conclusion.")
+    elif "*" in fields:
+        observations.append("Vary wildcard prevents a matching reuse decision; it is not a no-store directive.")
+    else:
+        observations.append("Vary lists request-header cache-key selectors; correct variant segregation is unverified.")
+        if len(fields) != len(set(fields)):
+            observations.append("Repeated Vary selectors were observed; no additional protection is inferred.")
+        if "cookie" in fields or "authorization" in fields:
+            observations.append("Vary includes an authentication-related selector; this does not prove isolation or sensitivity.")
+
+    if evidence.cookie_evidence_available is not True:
+        observations.append("Cookie presence could not be established reliably.")
+    elif evidence.cookie_observations:
+        observations.append("Set-Cookie presence was observed; cookies alone do not establish personalized or sensitive content.")
+    else:
+        observations.append("No Set-Cookie was observed in the bounded raw response headers; sensitivity is still unknown.")
+    if evidence.http_status == 206:
+        observations.append("The original response is partial; representation-wide cache behavior was not tested.")
+    elif evidence.http_status is not None:
+        observations.append("Context describes only the original response; no alternate variant was requested.")
+    return tuple(observations)
+
+
 class CacheSecurityEvaluator(CheckEvaluator):
     """Evaluate cache directives without inferring response sensitivity."""
 
     def _evaluate(self, evidence):
+        result = self._evaluate_cache_control(evidence)
+        if evidence.http_status is None:
+            return result
+        return replace(result, limitations=result.limitations + _cache_response_context(evidence))
+
+    def _evaluate_cache_control(self, evidence):
         if evidence.http_status is None:
             return self._not_verified_result(
                 title="أمان التخزين المؤقت (Cache Security)",

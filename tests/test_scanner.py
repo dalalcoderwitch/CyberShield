@@ -1145,7 +1145,7 @@ Sydvx0FeNWmqPBhmlaj0SqH0
                 return
 
             if error_mode["enabled"] and self.path == "/integrated-check":
-                body = b"Traceback (most recent call last):\n  File '/srv/app/private.py'\nSQLSTATE[hidden]"
+                body = b"Traceback (most recent call last):\n  File '/srv/app/private.py'\nSQLSTATE[42000]: syntax error"
                 self.send_response(500)
                 self.send_header("Content-Type", "text/html")
                 self.send_header("Content-Length", str(len(body)))
@@ -1163,7 +1163,7 @@ Sydvx0FeNWmqPBhmlaj0SqH0
 
             self.send_response(200)
             if disclosure_mode["enabled"] and self.path == "/integrated-check":
-                body = b'<html><script src="/app.js"></script></html>'
+                body = b'<html><script src="/app.js"></script><script>const token="LOCAL_XSS_SECRET";document.body.innerHTML=location.hash;</script></html>'
                 self.send_header("Content-Type", "text/html")
                 self.send_header("Content-Length", str(len(body)))
             for header_name, header_value in response_policy_headers.items():
@@ -1494,6 +1494,9 @@ Sydvx0FeNWmqPBhmlaj0SqH0
         assert report_findings["header_permissions_policy"]["severity"] == "info"
         assert report_findings["cookie_secure"]["status"] == "passed"
         assert report_findings["cache_security"]["status"] == "passed"
+        assert report_findings["xss_passive_indicators"]["status"] == "warning"
+        assert "LOCAL_XSS_SECRET" not in repr(integrated_report) + caplog.text
+        assert any("Set-Cookie presence" in item for item in report_findings["cache_security"]["limitations"])
         assert sum(item["check_id"] == "cache_security" for item in integrated_report["findings"]) == 1
         assert len(integrated_report["findings"]) == 30
         assert "LOCAL_CACHE_SECRET_711" not in repr(integrated_report) + caplog.text

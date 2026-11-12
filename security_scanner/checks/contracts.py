@@ -260,14 +260,14 @@ _CONTRACT_ITEMS = (
     # Cache.
     _contract(
         "cache_security",
-        ("cache_control", "pragma", "expires"),
+        ("cache_control", "pragma", "expires", "vary", "response_date", "cookie_presence", "http_status"),
         "shared_http_response",
     ),
 
     # Passive indicators.
     _contract(
         "xss_passive_indicators",
-        ("http_status", "content_security_policy"),
+        ("http_status", "content_security_policy", "sanitized_original_html_observation"),
         "shared_http_response",
     ),
     _contract(

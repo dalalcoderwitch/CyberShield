@@ -521,7 +521,7 @@ def test_passive_sql_report_reuses_original_sanitized_evidence(monkeypatch):
     monkeypatch.setattr(report_module, "_safe_cors_preflight", lambda *a, **k: "timeout")
     monkeypatch.setattr(report_module, "_safe_http_redirect_probe", lambda *a, **k: "timeout")
     monkeypatch.setattr(report_module, "_collect_disclosure_evidence", lambda *a, **k:
-        DisclosureEvidence(error_status=500, error_patterns=classify_error_sample(b"SQLSTATE[42000] SECRET db password")))
+        DisclosureEvidence(error_status=500, error_sample_complete=True, error_patterns=classify_error_sample(b"SQLSTATE[42000]: syntax error SECRET db password")))
     # No diagnostic network operations: collector boundary is mocked independently.
     monkeypatch.setattr(report_module, "evaluate_spf_domain", lambda *a, **k: (_ for _ in ()).throw(ValueError()))
     monkeypatch.setattr(report_module, "evaluate_dmarc_domain", lambda *a, **k: (_ for _ in ()).throw(ValueError()))

@@ -691,6 +691,10 @@ def _collect_disclosure_evidence(target, original_status, original_capture, dead
     original_sample = original_capture.pop("sample", b"") if original_capture else b""
     original_complete = original_capture.pop("sample_complete", False) if original_capture else False
     original_media = original_capture.pop("media_type", "unknown") if original_capture else "unknown"
+    from .checks.passive_evidence import collect_passive_xss_sample
+    passive_xss = collect_passive_xss_sample(
+        original_sample, status=original_status, media_type=original_media, complete=original_complete,
+    )
     header_available = original_capture.pop("header_available", None) if original_capture else None
     server_names = original_capture.pop("server_header_names", ()) if original_capture else ()
     server_types = original_capture.pop("server_info_types", ()) if original_capture else ()
@@ -807,7 +811,7 @@ def _collect_disclosure_evidence(target, original_status, original_capture, dead
         server_header_names=tuple(server_names), server_info_types=tuple(server_types),
         error_status=original_status if is_error else None, error_sample_complete=error_complete,
         error_patterns=tuple(error_patterns), public_file_results=tuple(public_results),
-        request_count=request_count,
+        request_count=request_count, passive_xss=passive_xss,
     )
 
 

@@ -142,9 +142,9 @@ def evaluate_week3_evidence(evidence: EvidenceCollection):
     results = list(
         evaluate_response_evidence_prototypes(evidence, include_week4=False)
     )
-    for check_id, evaluator_type in _TLS_EVALUATORS + _BLOCKED_REDIRECT_EVALUATORS:
-        definition = registry.get(check_id)
-        results.append(evaluator_type(definition).evaluate(evidence))
+    results.extend(_evaluate_response_group(
+        evidence, _TLS_EVALUATORS + _BLOCKED_REDIRECT_EVALUATORS,
+    ))
     for check_id, evaluator_type in _COOKIE_EVALUATORS:
         definition = registry.get(check_id)
         try:

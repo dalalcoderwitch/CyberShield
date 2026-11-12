@@ -6,6 +6,8 @@ import json
 import re
 from urllib.parse import urljoin, urlsplit
 
+from .passive_evidence import PassiveXSSEvidence
+
 
 SENSITIVE_PATHS = (
     "/.env", "/.git/HEAD", "/.git/config", "/.DS_Store",
@@ -42,8 +44,11 @@ class DisclosureEvidence:
     error_patterns: tuple[str, ...] = ()
     public_file_results: tuple[tuple[int | None, str, str, str], ...] = ()
     request_count: int = 0
+    passive_xss: PassiveXSSEvidence | None = None
 
     def __post_init__(self):
+        if self.passive_xss is not None and not isinstance(self.passive_xss, PassiveXSSEvidence):
+            raise TypeError("Expected sanitized passive HTML evidence")
         if self.source_map_state not in {"confirmed", "reference_only", "clear", "unknown"}:
             raise ValueError("unsupported source-map evidence state")
         if self.server_headers_available is not None and type(self.server_headers_available) is not bool:
@@ -140,6 +145,57 @@ def classify_server_headers(header_values: dict[str, tuple[str, ...]]):
     return tuple(names), tuple(sorted(kinds))
 
 
+class _ErrorText(HTMLParser):
+    """Ignore documentation/code and inactive HTML regions for SQL indicators."""
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.ignored = []
+        self.text = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag in {"pre", "code", "script", "style", "template"}:
+            self.ignored.append(tag)
+        elif not self.ignored:
+            self.text.append("\n")
+
+    def handle_endtag(self, tag):
+        if self.ignored and tag == self.ignored[-1]:
+            self.ignored.pop()
+        elif not self.ignored:
+            self.text.append("\n")
+
+    def handle_data(self, data):
+        if not self.ignored:
+            self.text.append(data)
+
+
+def _has_sql_error_signature(data):
+    parser = _ErrorText()
+    try:
+        parser.feed(data)
+        parser.close()
+    except Exception:
+        return False
+    visible = "".join(parser.text)
+    # Only recognizable error lines, never a database/framework name alone.
+    for line in visible.splitlines():
+        if re.search(r"(?i)\b(?:tutorial|example|documentation)\b", line):
+            continue
+        sqlstate = re.search(
+            r"(?i)^\s*(?:(?:Fatal error|Uncaught)\s*:?\s*)?(?:PDOException:\s*)?"
+            r"SQLSTATE\[[0-9A-Z]{5}\](?:\s*\[\d+\])?\s*:?.{0,160}"
+            r"(?:syntax error|table missing|does not exist|access denied|connection refused|"
+            r"constraint violation|unknown (?:table|column|database)|could not connect)", line,
+        )
+        if sqlstate or re.search(
+            r"(?i)^\s*(?:ORA-\d{5}:\s*\S|ERROR:\s*syntax error at or near\b|"
+            r"(?:sqlite3\.OperationalError|SQLite3?Exception):\s*\S|"
+            r"Warning:\s*mysql_(?:query|fetch\w*)\(\).{0,120}(?:expects|error|failed))", line,
+        ):
+            return True
+    return False
+
+
 def classify_error_sample(sample: bytes) -> tuple[str, ...]:
     """Recognize common error disclosure families without retaining matched text."""
     if not isinstance(sample, bytes):
@@ -150,7 +206,7 @@ def classify_error_sample(sample: bytes) -> tuple[str, ...]:
         patterns.add("stack_trace")
     if re.search(r"(?i)(?:/var/www/|/home/[^/]+/|/srv/[^/]+/|/usr/src/|[A-Z]:\\(?:inetpub|wwwroot)\\)", data):
         patterns.add("internal_path")
-    if re.search(r"(?i)SQLSTATE\[|ORA-\d{4,}|syntax error at or near|mysql_(?:fetch|query)|PDOException|SQLite(?:3)?::?Exception", data):
+    if _has_sql_error_signature(data):
         patterns.add("sql_error")
     if re.search(r"(?i)Werkzeug Debugger|Django Version|DEBUG\s*=\s*True|Laravel Ignition|Rails\.root|ASP\.NET.*Server Error|Whoops, looks like something went wrong", data):
         patterns.add("framework_debug")

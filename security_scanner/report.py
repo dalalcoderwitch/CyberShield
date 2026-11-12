@@ -4,7 +4,7 @@ from uuid import uuid4
 
 from .scanner import _safe_get_response, _safe_http_redirect_probe, _safe_cors_preflight, _resolve_redirect_location_addresses, _collect_disclosure_evidence, check_security_headers
 
-from .checks.correlation import safe_correlate_findings
+from .checks.correlation import CORRELATION_RULES_VERSION, safe_correlate_findings
 from .checks.context import CheckContext
 from .checks.evidence import EvidenceCollection
 from .checks.response_runner import (
@@ -589,6 +589,8 @@ def scan_target(
             EvidenceCollection(
                 http_status=status_code if error is None else None,
                 _headers=headers if error is None else {},
+                cookie_evidence_available=cookie_evidence.get("available") if error is None else None,
+                cookie_observations=cookie_evidence.get("observations", ()) if error is None else (),
             )
         )
 
@@ -720,5 +722,6 @@ def scan_target(
         "findings": findings,
         "limitations": REPORT_LIMITATIONS,
         "notice": REPORT_NOTICE,
-        **({"correlations": safe_correlate_findings(findings)} if include_expanded_checks else {}),
+        **({"correlations": safe_correlate_findings(findings),
+            "correlation_rules_version": CORRELATION_RULES_VERSION} if include_expanded_checks else {}),
     }
