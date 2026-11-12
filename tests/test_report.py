@@ -204,6 +204,23 @@ def test_expanded_report_evaluates_tls_metadata_from_scanner_connection(monkeypa
     monkeypatch.setattr("security_scanner.report._resolve_redirect_location_addresses",
                         lambda destination, deadline=None: ("93.184.216.34", "10.0.0.8"))
 
+    from security_scanner.checks.result import CheckResult
+
+    monkeypatch.setattr(
+        "security_scanner.report.evaluate_spf_domain",
+        lambda domain, deadline=None: CheckResult(
+            check_id="dns_spf",
+            title="SPF test",
+            status="not_verified",
+            severity="info",
+            confidence="low",
+            evidence="Synthetic test evidence.",
+            explanation="No live DNS query in this test.",
+            recommendation="Test only.",
+            limitations=("Test only.",),
+        ),
+    )
+
     report = scan_target("https://example.com", include_expanded_checks=True)
     findings = {item["check_id"]: item for item in report["findings"]}
 
@@ -326,7 +343,7 @@ def test_shared_header_evidence_reaches_expanded_findings_and_summary(monkeypatc
     assert len(by_id) == len(findings)
     assert by_id["header_referrer_policy"]["status"] == "passed"
     assert by_id["header_permissions_policy"]["status"] == "warning"
-    assert "لم يتم تقييم التوجيهات" in by_id["header_permissions_policy"]["explanation"]
+    assert "لم تتم مقارنة هذه المصادر بأصل الهدف" in by_id["header_permissions_policy"]["explanation"]
     assert "قيمة معروفة ذات قيود مناسبة" in by_id["header_referrer_policy"]["evidence"]
     assert by_id["header_permissions_policy"]["severity"] == "info"
     assert referrer_secret not in repr(report)

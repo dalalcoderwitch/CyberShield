@@ -5,6 +5,7 @@ from security_scanner.checks import (
     EvidenceCollection,
     evaluate_shared_response_prototypes,
 )
+from security_scanner.checks.response_runner import evaluate_week3_evidence
 
 
 def test_response_runner_evaluates_three_checks_from_one_response():
@@ -175,3 +176,23 @@ def test_response_runner_rejects_invalid_evidence():
 
     with pytest.raises(TypeError, match="EvidenceCollection"):
         evaluate_response_evidence_prototypes(object())
+
+
+def test_week3_runner_excludes_week4_cache_check():
+    evidence = EvidenceCollection(
+        http_status=200,
+        _headers={
+            "Referrer-Policy": "strict-origin-when-cross-origin",
+            "Permissions-Policy": "camera=()",
+            "Cache-Control": "no-store",
+        },
+    )
+
+    results = evaluate_week3_evidence(evidence)
+    check_ids = [result.check_id for result in results]
+
+    assert len(check_ids) == 18
+    assert len(check_ids) == len(set(check_ids))
+    assert "header_referrer_policy" in check_ids
+    assert "header_permissions_policy" in check_ids
+    assert "cache_security" not in check_ids

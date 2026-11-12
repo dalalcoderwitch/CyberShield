@@ -7,6 +7,8 @@ from security_scanner.checks import (
     create_default_registry,
 )
 from security_scanner.checks.evidence import EvidenceCollection
+from security_scanner.checks.header_checks import _parse_permissions_policy_dictionary
+from security_scanner.checks.tls_checks import RedirectPolicyEvaluator
 from security_scanner.checks.context import CheckContext
 from security_scanner.checks.response_runner import evaluate_week3_evidence
 from security_scanner.scanner import _collect_set_cookie_observations
@@ -139,57 +141,172 @@ def test_referrer_policy_does_not_echo_raw_value():
     assert "unsafe-url" not in result.evidence
 
 
-def test_permissions_policy_presence_is_not_reported_as_passed():
+def _permissions_policy_result(values=None):
+    headers = (
+        {}
+        if values is None
+        else {"Permissions-Policy": values}
+    )
+
     evaluator = make_evaluator(
         "header_permissions_policy",
         PermissionsPolicyEvaluator,
     )
+    return evaluator.evaluate(make_evidence(headers))
 
-    result = evaluator.evaluate(
-        make_evidence(
-            {"Permissions-Policy": "camera=(), microphone=()"}
-        )
-    )
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        ("camera=()",),
+        ("camera=(self)",),
+        ('geolocation=("https://example.com")',),
+        ("camera=*",),
+        ("camera=()", "microphone=()"),
+        ("camera=();report-to=endpoint",),
+        ('camera=(self "https://allowed.example")',),
+    ],
+)
+def test_permissions_policy_accepts_structured_dictionary_forms(values):
+    result = _permissions_policy_result(values)
 
     assert result.status == "warning"
-    assert result.severity == "info"
-    assert "camera=()" not in result.evidence
+    assert all(value not in result.evidence for value in values)
 
 
 def test_permissions_policy_missing_header_warns():
-    evaluator = make_evaluator(
-        "header_permissions_policy",
-        PermissionsPolicyEvaluator,
-    )
-
-    result = evaluator.evaluate(make_evidence())
+    result = _permissions_policy_result()
 
     assert result.status == "warning"
     assert result.severity == "low"
+
+
+def test_permissions_policy_empty_dictionary_is_not_claimed_as_protective():
+    result = _permissions_policy_result(("",))
+
+    assert result.status == "warning"
+    assert result.severity == "low"
+
+
+def test_permissions_policy_wildcard_is_a_potential_broad_policy():
+    result = _permissions_policy_result(("camera=*",))
+
+    assert result.status == "warning"
+    assert result.severity == "low"
+    assert "camera=*" not in result.evidence
 
 
 @pytest.mark.parametrize(
     "values",
     [
         ("not a policy ???",),
-        ("future-feature=()",),
-        ("camera=()", "microphone=()"),
+        ("camera=(",),
+        ("camera=(),",),
     ],
 )
-def test_permissions_policy_presence_never_claims_parsing_or_validity(values):
-    evaluator = make_evaluator(
-        "header_permissions_policy",
-        PermissionsPolicyEvaluator,
-    )
+def test_permissions_policy_rejects_malformed_or_ambiguous_dictionary(values):
+    result = _permissions_policy_result(values)
 
-    result = evaluator.evaluate(
-        make_evidence({"Permissions-Policy": values})
-    )
+    assert result.status == "warning"
+    assert result.severity == "medium"
+    assert all(value not in result.evidence for value in values)
+
+
+def test_permissions_policy_ignores_unknown_feature_names_without_rejecting_syntax():
+    result = _permissions_policy_result(("future-feature=()",))
 
     assert result.status == "warning"
     assert result.severity == "info"
-    assert "لم يتم تقييم التوجيهات" in result.explanation
-    assert all(value not in result.evidence for value in values)
+    assert "future-feature" not in result.evidence
+
+
+def test_permissions_policy_marks_disallowed_member_value_types():
+    result = _permissions_policy_result(("camera=?1",))
+
+    assert result.status == "warning"
+    assert result.severity == "medium"
+    assert "camera=?1" not in result.evidence
+
+
+def test_permissions_policy_duplicate_report_to_uses_last_parameter_value():
+    parsed = _parse_permissions_policy_dictionary(
+        ("camera=();report-to=123;report-to=endpoint",)
+    )
+
+    assert parsed["directive_count"] == 1
+    assert parsed["ignored_members"] == 0
+    assert parsed["invalid_report_to_count"] == 0
+
+    result = _permissions_policy_result(
+        ("camera=();report-to=123;report-to=endpoint",)
+    )
+    assert result.severity == "info"
+
+
+def test_permissions_policy_ignores_non_token_report_to_without_rejecting_allowlist():
+    parsed = _parse_permissions_policy_dictionary(
+        ("camera=();report-to=endpoint;report-to=123",)
+    )
+
+    assert parsed["ignored_members"] == 0
+    assert parsed["invalid_report_to_count"] == 1
+
+    result = _permissions_policy_result(
+        ("camera=();report-to=endpoint;report-to=123",)
+    )
+    assert result.status == "warning"
+    assert result.severity == "info"
+
+
+
+
+
+def test_permissions_policy_duplicate_dictionary_keys_use_last_value():
+    restrictive_last = _parse_permissions_policy_dictionary(
+        ("camera=*, camera=()",)
+    )
+    wildcard_last = _parse_permissions_policy_dictionary(
+        ("camera=(), camera=*",)
+    )
+
+    assert restrictive_last["directive_count"] == 1
+    assert restrictive_last["wildcard"] is False
+
+    assert wildcard_last["directive_count"] == 1
+    assert wildcard_last["wildcard"] is True
+
+
+def test_permissions_policy_leading_zero_integer_is_valid_sf_but_ignored_as_source():
+    parsed = _parse_permissions_policy_dictionary(("camera=(0002)",))
+
+    assert parsed["directive_count"] == 1
+    assert parsed["ignored_members"] == 1
+    assert parsed["wildcard"] is False
+
+
+def test_permissions_policy_rejects_invalid_source_expression_inside_string():
+    result = _permissions_policy_result(
+        ('camera="not a policy ???"',)
+    )
+
+    assert result.status == "warning"
+    assert result.severity == "medium"
+    assert "not a policy" not in result.evidence
+
+
+def test_permissions_policy_accepts_scheme_and_host_source_expressions():
+    for value in (
+        "https:",
+        "https://example.com",
+        "*.example.com",
+        "https://*.example.com:443/path",
+    ):
+        parsed = _parse_permissions_policy_dictionary(
+            (f'camera="{value}"',)
+        )
+        assert parsed["explicit_sources"] is True
+        assert parsed["ignored_members"] == 0
+
 
 
 def test_cache_security_passes_for_no_store():
@@ -401,6 +518,23 @@ def test_cookie_samesite_none_with_secure_passes_and_discloses_cross_site_semant
     assert result.status == "passed"
     assert "يسمح بالاستخدام عبر المواقع" in result.explanation
     assert "لا يعني وحده وجود ثغرة" in result.explanation
+
+
+@pytest.mark.parametrize(
+    ("observations", "expected_severity"),
+    (
+        (((True, True, "ambiguous"), (True, True, "missing")), "low"),
+        (((True, True, "ambiguous"), (False, False, "none")), "medium"),
+    ),
+)
+def test_cookie_samesite_confirmed_findings_are_not_hidden_by_ambiguous_cookie(
+    observations, expected_severity
+):
+    result = _cookie_results(observations)["cookie_samesite"]
+
+    assert (result.status, result.severity) == ("warning", expected_severity)
+    assert "2" in result.evidence
+    assert len(result.limitations) == 3
 
 
 @pytest.mark.parametrize(
@@ -650,3 +784,104 @@ def test_open_redirect_skips_non_redirect_response_and_marks_missing_location():
     assert _access_result("open_redirect", http_status=304,
                           redirect_location_values=("https://outside.invalid",)).status == "skipped"
     assert _access_result("open_redirect", http_status=302).status == "passed"
+
+def _redirect_policy_result(check_id, **probe_evidence):
+    evidence = EvidenceCollection(
+        http_status=None,
+        **probe_evidence,
+    )
+    evaluator = make_evaluator(check_id, RedirectPolicyEvaluator)
+    return evaluator.evaluate(evidence)
+
+
+@pytest.mark.parametrize(
+    "location",
+    (
+        "https:///path",
+        "https://?query=1",
+        "https://bad host/path",
+        r"https://bad\host/path",
+    ),
+)
+def test_http_to_https_redirect_rejects_missing_or_malformed_host(location):
+    result = _redirect_policy_result(
+        "http_to_https_redirect",
+        http_probe_status=302,
+        http_probe_location=location,
+        redirect_destination_url=location,
+    )
+
+    assert result.status == "warning"
+
+
+@pytest.mark.parametrize(
+    "destination",
+    (
+        "https://example.com/path",
+        "https://example.com:443/path",
+    ),
+)
+def test_http_to_https_redirect_accepts_valid_https_destination(destination):
+    result = _redirect_policy_result(
+        "http_to_https_redirect",
+        http_probe_status=302,
+        http_probe_location=destination,
+        redirect_destination_url=destination,
+    )
+
+    assert result.status == "passed"
+
+
+@pytest.mark.parametrize(
+    "check_id",
+    ("http_to_https_redirect", "redirect_destination_safety"),
+)
+def test_redirect_checks_are_not_verified_when_probe_times_out(check_id):
+    result = _redirect_policy_result(
+        check_id,
+        http_probe_error="timeout",
+    )
+
+    assert result.status == "not_verified"
+
+
+@pytest.mark.parametrize(
+    "check_id",
+    ("http_to_https_redirect", "redirect_destination_safety"),
+)
+def test_redirect_checks_report_internal_probe_errors(check_id):
+    result = _redirect_policy_result(
+        check_id,
+        http_probe_error="internal",
+    )
+
+    assert result.status == "error"
+
+
+def test_redirect_destination_is_not_verified_when_probe_outcome_is_missing():
+    result = _redirect_policy_result("redirect_destination_safety")
+
+    assert result.status == "not_verified"
+
+
+def test_non_redirect_http_response_skips_only_destination_safety():
+    destination_result = _redirect_policy_result(
+        "redirect_destination_safety",
+        http_probe_status=200,
+    )
+    redirect_result = _redirect_policy_result(
+        "http_to_https_redirect",
+        http_probe_status=200,
+    )
+
+    assert destination_result.status == "skipped"
+    assert redirect_result.status == "warning"
+
+
+def test_redirect_without_location_does_not_verify_destination():
+    result = _redirect_policy_result(
+        "redirect_destination_safety",
+        http_probe_status=302,
+    )
+
+    assert result.status == "not_verified"

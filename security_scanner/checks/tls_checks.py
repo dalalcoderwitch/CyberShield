@@ -86,14 +86,58 @@ class RedirectPolicyEvaluator(CheckEvaluator):
                     port = parsed.port
                 except ValueError:
                     return CheckResult(cid, self.definition.title, "warning", "medium", "medium", "قيمة Location غير صالحة.", "تعذر إثبات وجهة HTTPS.", "أرسل Location صالحة.", ())
-                if parsed.scheme.lower() == "https" and port in (None, 443) and parsed.username is None and parsed.password is None:
+                hostname = parsed.hostname
+                hostname_is_valid = bool(hostname) and not any(
+                    char.isspace() or ord(char) < 32 or ord(char) == 127
+                    for char in hostname
+                )
+                if (
+                    parsed.scheme.lower() == "https"
+                    and hostname_is_valid
+                    and port in (None, 443)
+                    and parsed.username is None
+                    and parsed.password is None
+                    and chr(92) not in parsed.netloc
+                ):
                     return CheckResult(cid, self.definition.title, "passed", "info", "high", f"استجابة HTTP {code} تتضمن وجهة HTTPS على المنفذ 443.", "تم إثبات استجابة ترقية دون اتباعها.", "حافظ على التحويل الآمن.", ("لم يتم الاتصال بوجهة التحويل.",))
                 return CheckResult(cid, self.definition.title, "warning", "medium", "high", "استجابة HTTP وجهتها لا تحقق HTTPS/443 أو تحتوي بيانات اعتماد.", "لم تثبت ترقية آمنة إلى HTTPS.", "استخدم وجهة HTTPS/443 دون بيانات اعتماد.", ("لم يتم الاتصال بوجهة التحويل.",))
             return CheckResult(cid, self.definition.title, "warning", "medium", "high", f"الأصل قابل للوصول عبر HTTP ويرد بالرمز {code} دون تحويل مقبول إلى HTTPS.", "الاستجابة لا تستخدم رمز تحويل HTTP إلى HTTPS معتمداً.", "حوّل طلبات HTTP إلى HTTPS.", ())
 
+        if evidence.http_probe_error:
+            if evidence.http_probe_error == "internal":
+                return CheckResult(
+                    cid,
+                    self.definition.title,
+                    "error",
+                    "info",
+                    "low",
+                    "\u062a\u0639\u0630\u0631 \u062a\u0646\u0641\u064a\u0630 \u0645\u0633\u0628\u0627\u0631 HTTP \u0628\u0633\u0628\u0628 \u062e\u0637\u0623 \u062f\u0627\u062e\u0644\u064a.",
+                    "\u0644\u0645 \u064a\u0646\u062a\u062c \u062f\u0644\u064a\u0644 \u0642\u0627\u0628\u0644 \u0644\u0644\u062a\u0642\u064a\u064a\u0645.",
+                    "\u0631\u0627\u062c\u0639 \u0633\u062c\u0644 \u0627\u0644\u062a\u0646\u0641\u064a\u0630 \u0627\u0644\u062f\u0627\u062e\u0644\u064a.",
+                    (),
+                )
+            return self._not_verified_result(
+                self.definition.title,
+                "\u062a\u0639\u0630\u0631 \u0627\u0644\u062d\u0635\u0648\u0644 \u0639\u0644\u0649 \u0627\u0633\u062a\u062c\u0627\u0628\u0629 HTTP \u0645\u0646 \u0645\u0633\u0628\u0627\u0631 \u0627\u0644\u0623\u0635\u0644.",
+            )
+
+        code = evidence.http_probe_status
+        if code is None:
+            return self._not_verified_result(
+                self.definition.title,
+                "\u0644\u0645 \u062a\u062a\u0648\u0641\u0631 \u0627\u0633\u062a\u062c\u0627\u0628\u0629 HTTP \u0644\u062a\u0642\u064a\u064a\u0645 \u0648\u062c\u0647\u0629 \u0627\u0644\u062a\u062d\u0648\u064a\u0644.",
+            )
+
+        if code not in (301, 302, 303, 307, 308):
+            return self._result(
+                "skipped",
+                "info",
+                "high",
+                "\u0627\u0633\u062a\u062c\u0627\u0628\u0629 HTTP \u0641\u0639\u0644\u064a\u0629 \u0644\u0627 \u062a\u062d\u062a\u0648\u064a \u0639\u0644\u0649 \u0631\u0645\u0632 \u062a\u062d\u0648\u064a\u0644 \u0645\u0639\u062a\u0645\u062f.",
+                "\u062a\u0645 \u062a\u062e\u0637\u064a \u062a\u0642\u064a\u064a\u0645 \u0627\u0644\u0648\u062c\u0647\u0629 \u0644\u0639\u062f\u0645 \u0627\u0646\u0637\u0628\u0627\u0642 \u0627\u0644\u062a\u062d\u0648\u064a\u0644.",
+            )
+
         location = evidence.http_probe_location
-        if not evidence.http_probe_status or evidence.http_probe_status not in (301, 302, 303, 307, 308):
-            return self._result("skipped", "info", "high", "لا توجد وجهة تحويل HTTP منطبقة على هذه الاستجابة.", "تم تخطي تقييم الوجهة لعدم انطباقه.")
         if not location:
             return self._not_verified_result(self.definition.title, "استجابة تحويل HTTP لا تتضمن Location.")
         destination = evidence.redirect_destination_url

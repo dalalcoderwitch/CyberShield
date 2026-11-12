@@ -10,6 +10,9 @@ from .checks.response_runner import (
     evaluate_week3_evidence,
     evaluate_shared_week3_checks,
 )
+from .checks.dns_checks import evaluate_dmarc_domain, evaluate_spf_domain
+from .checks.dnssec_checks import evaluate_dnssec_domain
+from .checks.result import CheckResult
 
 
 ENGINE_VERSION = "1.0.0"
@@ -576,6 +579,95 @@ def scan_target(
                     redirect_request_url=target_url if access_evidence.get("available") else None,
                     disclosure_evidence=disclosure_evidence)
             )
+
+        # SPF uses only the hostname captured after target validation.
+        spf_domain = (
+            target[1]
+            if isinstance(target, (tuple, list)) and len(target) >= 2
+            else None
+        )
+
+        try:
+            spf_result = evaluate_spf_domain(
+                spf_domain,
+                deadline=deadline,
+            )
+        except Exception:
+            # A failure in one check must not abort the complete report.
+            spf_result = CheckResult(
+                check_id="dns_spf",
+                title="\u0633\u064a\u0627\u0633\u0629 SPF \u0644\u0646\u0637\u0627\u0642 \u0627\u0644\u0628\u0631\u064a\u062f \u0627\u0644\u0625\u0644\u0643\u062a\u0631\u0648\u0646\u064a",
+                status="error",
+                severity="info",
+                confidence="low",
+                evidence="\u062a\u0639\u0630\u0631 \u0625\u0643\u0645\u0627\u0644 \u062a\u0642\u064a\u064a\u0645 \u0633\u062c\u0644 SPF.",
+                explanation="\u062d\u062f\u062b \u062e\u0637\u0623 \u0623\u062b\u0646\u0627\u0621 \u062c\u0645\u0639 \u0623\u0648 \u062a\u062d\u0644\u064a\u0644 \u062f\u0644\u064a\u0644 SPF\u061b \u0644\u0645 \u064a\u062a\u0645 \u0627\u0633\u062a\u0646\u062a\u0627\u062c \u0646\u062a\u064a\u062c\u0629 \u0623\u0645\u0646\u064a\u0629.",
+                recommendation="\u0631\u0627\u062c\u0639\u064a \u062e\u062f\u0645\u0629 DNS \u0648\u0627\u0644\u062a\u0646\u0641\u064a\u0630 \u0627\u0644\u062f\u0627\u062e\u0644\u064a \u062b\u0645 \u0623\u0639\u064a\u062f\u064a \u0627\u0644\u0641\u062d\u0635.",
+                limitations=("\u0644\u0645 \u064a\u062a\u0645 \u0639\u0631\u0636 \u0642\u064a\u0645 DNS \u0627\u0644\u062e\u0627\u0645 \u0623\u0648 \u062a\u0641\u0627\u0635\u064a\u0644 \u0627\u0644\u0627\u0633\u062a\u062b\u0646\u0627\u0621.",),
+            )
+
+        expanded_results = tuple(expanded_results) + (spf_result,)
+        try:
+            dmarc_result = evaluate_dmarc_domain(
+                spf_domain,
+                deadline=deadline,
+            )
+        except Exception:
+            # A DMARC failure must not affect SPF or other findings.
+            dmarc_result = CheckResult(
+                check_id="dns_dmarc",
+                title="DMARC policy",
+                status="error",
+                severity="info",
+                confidence="low",
+                evidence="DMARC evaluation could not be completed.",
+                explanation=(
+                    "An internal error occurred while collecting or "
+                    "evaluating DMARC evidence; no security conclusion "
+                    "was inferred."
+                ),
+                recommendation=(
+                    "Review DNS availability and internal error logs, "
+                    "then retry the scan."
+                ),
+                limitations=(
+                    "Raw DNS TXT records and exception details are not "
+                    "included in the report.",
+                ),
+            )
+
+        expanded_results = tuple(expanded_results) + (dmarc_result,)
+
+        try:
+            dnssec_result = evaluate_dnssec_domain(
+                spf_domain,
+                deadline=deadline,
+            )
+        except Exception:
+            # DNSSEC failure must not affect other report findings.
+            dnssec_result = CheckResult(
+                check_id="dnssec",
+                title="DNSSEC indicators",
+                status="error",
+                severity="info",
+                confidence="low",
+                evidence="DNSSEC evaluation could not be completed.",
+                explanation=(
+                    "An internal error occurred while collecting or "
+                    "evaluating DNSSEC indicators; no security conclusion "
+                    "was inferred."
+                ),
+                recommendation=(
+                    "Review DNS availability and internal error logs, "
+                    "then retry the scan."
+                ),
+                limitations=(
+                    "Raw DNS records, key material, and exception details "
+                    "are not included in the report.",
+                ),
+            )
+
+        expanded_results = tuple(expanded_results) + (dnssec_result,)
 
         findings.extend(
             result.to_dict() for result in expanded_results

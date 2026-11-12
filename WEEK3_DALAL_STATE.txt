@@ -1232,3 +1232,156 @@ no tests were run or changed):
   `test_server_and_location_raw_values_are_filtered_from_generic_evidence`.
 
 This correction changes only the audit record in WEEK3_DALAL_STATE.txt.
+
+PHASE 1 ACCEPTANCE UPDATE — 2026-11-07
+======================================
+
+Scope completed:
+- Separated check phase from implementation lifecycle status.
+- Registry now marks the 18 Week 2/Week 3 expanded checks implemented.
+- The seven Week 4 checks remain planned:
+  dns_spf, dns_dmarc, dnssec, subdomain_takeover_indicators,
+  cache_security, xss_passive_indicators, sqli_passive_indicators.
+- Preserved cache_security evaluator and implementation, while excluding it
+  from the Week 3 report execution path.
+- Expanded report now contains exactly 23 findings: 5 foundational and
+  18 expanded, with unique IDs and summary.total == 23.
+- Default report remains at five findings.
+- Open Redirect contract now describes the original shared HTTP response
+  evidence and no longer claims an additional HTTP probe.
+- Redirect destination evaluation now distinguishes network failure,
+  internal probe error, missing response, and a real non-redirect response.
+  Missing probe evidence is not_verified; an internal failure is error;
+  skipped is reserved for an actual non-redirect response.
+
+Files changed in this phase:
+- security_scanner/checks/base.py
+- security_scanner/checks/registry.py
+- security_scanner/checks/response_runner.py
+- security_scanner/checks/contracts.py
+- security_scanner/checks/tls_checks.py
+- tests/test_check_registry.py
+- tests/test_check_response_runner.py
+- tests/test_check_contracts.py
+- tests/test_check_expanded_report.py
+- tests/test_check_response_evaluators.py
+
+Verification:
+- Registry, contract, response runner, expanded report and response evaluator
+  acceptance suite: 130 passed in 0.97s.
+- Separate focused redirect/report run after redirect-state correction:
+  88 passed in 0.66s.
+- Mocked timeout acceptance:
+  23 findings, 23 unique IDs, summary.total == 23.
+  https_connection=error.
+  http_to_https_redirect=not_verified.
+  redirect_destination_safety=not_verified.
+  No skipped, passed or warning results were emitted for the failed-probe case.
+- git diff --check on the ten owned files: clean.
+- No Git state-changing commands were run.
+- No backend, mobile, docs, or teammate-owned files were modified by this phase.
+
+Outstanding:
+- This closes the Registry/report/contract reconciliation phase only.
+- The full project test suite has not yet been rerun after these changes.
+- Week 2 quality review remains: Permissions-Policy parser depth, TLS evidence
+  and runtime behavior, redirect probe integration and destination DNS policy.
+- Week 1 safety regression review remains: URL/DNS/SSRF, pinning, request
+  limits, deadlines, cleanup, report schema and privacy.
+- Flask/API work remains owned by Bailsan.
+- Flutter/Android work remains owned by Ahmad.
+- Cross-layer API-to-Flutter acceptance remains a team integration task.
+- No Week 4 implementation was started.
+
+This update supersedes the earlier audit statements that the 18 expanded
+checks were still planned, cache_security was part of the 23-check delivery,
+and the Open Redirect contract was mismatched.
+FINAL PROJECT ACCEPTANCE REMAINS PARTIAL UNTIL THE REMAINING REVIEWS,
+FULL TEST SUITE, AND TEAM INTEGRATION ARE COMPLETE.
+
+PHASE 1 ACCEPTANCE UPDATE — 2026-11-08
+- Full focused Phase 1 suite: 146 passed in 0.99s.
+- Test files: test_check_registry.py, test_check_contracts.py,
+  test_check_response_runner.py, test_check_expanded_report.py,
+  test_check_response_evaluators.py.
+- Permissions-Policy parser is covered by the focused evaluator tests.
+- No failures in the complete five-file Phase 1 acceptance run.
+- Phase 1 focused acceptance: PASSED.
+- This does not mean the full project or cross-team integration is complete.
+
+WEEK 2 TLS ACCEPTANCE UPDATE — 2026-11-08
+- Focused TLS and report integration tests: 11 passed in 1.05s.
+- tls_certificate_expiry: accepted; expired, not-yet-valid,
+  30-day warning boundary, and 31-day valid cases covered.
+- tls_certificate_chain: accepted with limitation; confirms
+  verified-chain availability, not per-certificate path analysis.
+- tls_protocol_config: accepted; approved and rejected protocol/cipher
+  cases covered.
+- Local real TLS integration confirms verification and metadata capture.
+- Broader integration run had two stale expectation failures:
+  24 vs 23 findings, and an outdated Permissions-Policy explanation.
+  No TLS-focused test failed.
+
+WEEK 2 REDIRECT ACCEPTANCE UPDATE — 2026-11-08
+- Redirect regression suite: 124 passed in 1.49s.
+- http_to_https_redirect: malformed HTTPS destinations without a
+  hostname or with malformed hostname syntax are no longer passed.
+- Valid HTTPS destinations on the default port or port 443 remain passed.
+- redirect_destination_safety retains its HTTPS/443, credential,
+  DNS completeness, and public-address policy checks.
+- HTTP probe remains a single pinned GET to the HTTP root, without
+  automatic redirect following or destination connection.
+- Redirect focused acceptance: PASSED.
+- Full scanner/report integration still has a stale 24-vs-23
+  findings expectation outside the permitted test files.
+
+WEEK 3 DISCLOSURE ACCEPTANCE UPDATE — 2026-11-08
+- Existing Disclosure test suite: 37 passed in 0.53s.
+- Sensitive file, source-map, directory listing, server-header,
+  error-signature, and public-security-file evaluator coverage passed.
+- Local scanner integration previously confirmed the fixed 13-request
+  Disclosure budget, bounded Range requests, identity encoding,
+  no Cookie/Authorization headers, and report/log secret redaction.
+- Error HTTP 500 scanner end-to-end path remains to be verified
+  independently because the broader integration test stops earlier
+  at a stale 24-vs-23 findings assertion.
+- Disclosure evaluator acceptance: PASSED.
+- Scanner integration acceptance: PARTIAL.
+
+WEEK 1 REGRESSION UPDATE ? 2026-11-08
+- Contract, registry, expanded-report, and report tests: 56 passed.
+- Scanner, check-context, evidence, and report-compatibility tests:
+  150 passed in 1.62s.
+- Local real TLS scanner integration: 1 passed in 1.91s.
+- Updated three stale finding-count expectations from 24 to 23.
+  HTTP request counters were preserved.
+- Updated one stale Permissions-Policy explanation expectation.
+- No production scanner logic was changed during these test-expectation updates.
+
+SCOPE CORRECTION
+- AGENTS.md explicitly permits modifying tests/test_scanner.py
+  and tests/test_report.py. Earlier notes saying these files were
+  outside the permitted test paths were inaccurate.
+
+DALAL REGRESSION ACCEPTANCE ? 2026-11-08
+- Complete Dalal scanner regression: 413 passed in 4.49s.
+- 17 test files executed successfully.
+- Coverage included scanner, report, registry, contracts,
+  evidence, evaluation, TLS, redirects, cookies, CORS,
+  Open Redirect, and Disclosure.
+- No test failures in the complete Dalal regression run.
+- Week 1 regression: ACCEPTED.
+- Week 2/3 scanner regression: ACCEPTED.
+- Flask API tests were intentionally excluded as Bailsan's scope.
+- Flutter/mobile tests were intentionally excluded as Ahmad's scope.
+
+FINAL AUDIT CORRECTION - 2026-11-08
+- The earlier Disclosure scanner integration PARTIAL note is superseded.
+- The full 413-test regression passed, including test_scanner.py.
+- The HTTP 500 error-information disclosure integration scenario
+  is now verified by the passing scanner integration test.
+- Earlier 24-finding expectations were corrected to 23.
+- HTTP request counters were intentionally preserved.
+- tests/test_scanner.py and tests/test_report.py are permitted by AGENTS.md.
+- Final permitted-path audit found no untracked files in Dalal's scope.
+- git diff --check reported no whitespace errors; only line-ending warnings.

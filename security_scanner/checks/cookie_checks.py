@@ -76,18 +76,6 @@ class CookieAttributeEvaluator(CheckEvaluator):
             )
 
         ambiguous = [index for index, item in enumerate(observations, 1) if item[2] == "ambiguous"]
-        if ambiguous:
-            unresolved = len(ambiguous)
-            resolved = count - unresolved
-            return self._result(
-                "not_verified", "info", "medium",
-                f"تعذر حسم SameSite لعدد {unresolved} من أصل {count} ملفات Cookie؛ حُسمت الخاصية لعدد {resolved}.",
-                "تعارضت أو تعذر تحليل قيم SameSite لبعض ملفات Cookie.",
-                "أعد التقييم بعد توفير قيمة SameSite واحدة قابلة للتحليل لكل ملف.",
-                (f"الأرقام غير المحسومة: {self._indices(ambiguous)}.",
-                 "لا تُعرض أسماء أو قيم Cookie."),
-            )
-
         missing = [index for index, item in enumerate(observations, 1) if item[2] == "missing"]
         invalid = [index for index, item in enumerate(observations, 1) if item[2] == "invalid"]
         none_without_secure = [
@@ -98,17 +86,44 @@ class CookieAttributeEvaluator(CheckEvaluator):
         if affected:
             if none_without_secure:
                 severity = "medium"
-                explanation = "تستخدم بعض ملفات Cookie SameSite=None دون Secure، بينما قد تكون خصائص أخرى مفقودة أو غير معروفة."
+                explanation = "Some cookies use SameSite=None without Secure; other attributes may also be missing or unknown."
             else:
                 severity = "low"
-                explanation = "بعض ملفات Cookie تفتقد SameSite أو تحمل قيمة غير معروفة/غير صالحة."
+                explanation = "Some cookies are missing SameSite or have an unknown/invalid value."
+
+            limitations = (
+                "SameSite=None permits cross-site use; its presence alone does not prove a vulnerability.",
+                "Cookie names and values are not recorded.",
+            )
+            if ambiguous:
+                explanation = (
+                    f"{explanation} "
+                    f"{len(ambiguous)} additional cookie(s) have ambiguous SameSite values."
+                )
+                limitations += (
+                    f"SameSite could not be resolved for cookie indices: {self._indices(ambiguous)}.",
+                )
+
             return self._result(
                 "warning", severity, "high",
                 self._count_evidence(count, len(affected), affected, "SameSite"),
                 explanation,
-                "حدد SameSite صراحةً، واستخدم Secure مع None.",
-                ("SameSite=None يسمح بالاستخدام عبر المواقع؛ وجوده وحده لا يثبت وجود ثغرة.",
-                 "لم تُسجل أسماء أو قيم Cookie."),
+                "Set SameSite explicitly and use Secure with None.",
+                limitations,
+            )
+
+        if ambiguous:
+            unresolved = len(ambiguous)
+            resolved = count - unresolved
+            return self._result(
+                "not_verified", "info", "medium",
+                f"Could not resolve SameSite for {unresolved} of {count} cookies; {resolved} were resolved.",
+                "Some SameSite values conflict or could not be analyzed.",
+                "Review duplicate and conflicting SameSite attributes.",
+                (
+                    f"Ambiguous cookie indices: {self._indices(ambiguous)}.",
+                    "Cookie names and values are not recorded.",
+                ),
             )
 
         none_values = sum(item[2] == "none" for item in observations)

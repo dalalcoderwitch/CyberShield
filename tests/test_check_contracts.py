@@ -73,7 +73,6 @@ def test_http_probe_checks_are_explicitly_marked():
         "http_to_https_redirect",
         "redirect_destination_safety",
         "cors_misconfiguration",
-        "open_redirect",
         "sensitive_file_exposure",
         "source_maps_exposure",
         "directory_listing",
@@ -132,3 +131,16 @@ def test_contract_rejects_duplicate_required_inputs():
             required_inputs=("headers", "headers"),
             collection_modes=("shared_http_response",),
         )
+
+
+def test_open_redirect_uses_original_shared_response_without_probe():
+    contract = CHECK_INPUT_CONTRACTS["open_redirect"]
+
+    assert contract.required_inputs == (
+        "http_status",
+        "redirect_location_values",
+        "redirect_evidence_available",
+        "redirect_request_url",
+    )
+    assert contract.collection_modes == ("shared_http_response",)
+    assert not contract.requires_additional_network_operation

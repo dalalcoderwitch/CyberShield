@@ -70,9 +70,3 @@ class CheckDefinition:
                 raise ValueError(
                     "Foundational checks must be marked as implemented"
                 )
-
-        if self.phase == "expanded":
-            if self.implementation_status != "planned":
-                raise ValueError(
-                    "Expanded checks must remain planned in this catalog"
-                )

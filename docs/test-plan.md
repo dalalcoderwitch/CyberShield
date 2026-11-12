@@ -65,6 +65,28 @@ A missing header, failed connection, or insufficient response must never be repo
 
 A report with status completed means that report generation finished. It does not mean every security check passed or that the target is secure.
 
+### 4.1 Severity and Confidence
+
+`severity` describes the potential security impact of an observation,
+not whether the check executed successfully.
+
+- `info`: informational or operational context; no weakness is established.
+- `low`: a hardening observation with limited potential impact.
+- `medium`: a security configuration observation whose impact depends on context.
+- `high`: a potentially significant impact requiring clear evidence and defined criteria.
+
+`high` is allowed by the result contract but is not currently assigned
+by the five foundational checks.
+
+`confidence` describes the strength of the evidence:
+
+- `low`: limited evidence or insufficient basis for a strong conclusion.
+- `medium`: direct evidence exists, but interpretation or coverage is limited.
+- `high`: clear, direct evidence supports the specific condition tested.
+
+Tests must treat severity, confidence, and status as independent fields.
+A change in one field must not silently change the meaning of another.
+
 ## 5. Expected Report Structure
 
 Each finding must include:
@@ -147,7 +169,15 @@ However, mocked responses cannot independently prove that a real connection:
 - Resists DNS rebinding and time-of-check/time-of-use attacks.
 - Rejects every unsafe redirect or destination change.
 
-The test named test_request_pins_validated_ip_and_preserves_tls_hostname must not be treated as proof of real network-level protection unless its implementation and test environment establish that property.
+The test named test_request_pins_validated_ip_and_preserves_tls_hostname verifies the configured connection URL, adapter hostname, SNI parameter, and certificate hostname parameter.
+
+The test named test_request_uses_pinned_ip_and_tls_hostname_through_http_stack follows Requests and urllib3 to the connection boundary, but deliberately intercepts before opening a network socket.
+
+The test named test_real_tls_rejects_untrusted_self_signed_certificate performs local TLS handshakes and records the SNI values received by the local server. It verifies the expected values (localhost, wrong.example, and localhost) while checking certificate trust and hostname matching.
+
+These tests provide coverage of individual connection and TLS properties. They do not prove the complete scanner path from DNS validation through the pinned outbound connection, or establish behavior in every production network environment.
+
+Automated mocked regression tests also verify that a validated DNS result is reused without a second lookup, that prohibited IPv4 and IPv6 destinations are rejected while a public IPv6 address is accepted, and that redirects are not followed automatically. These tests do not constitute live-network verification.
 
 A manual request to a public website is a smoke test only. It is not a substitute for automated regression tests or a controlled security test environment.
 
@@ -157,18 +187,12 @@ The current test suite must therefore be described as a development baseline, no
 
 The following cases remain to be implemented or independently verified:
 
-- DNS rebinding and changes between validation and connection.
-- IPv4 and IPv6 destination handling.
-- Redirect responses pointing to loopback or private addresses.
-- TLS certificate hostname mismatch.
-- Invalid, expired, or untrusted TLS certificates.
-- Real connection behavior when the validated IP is pinned.
-- Verification of SNI and hostname validation on a real TLS connection.
-- Connection timeout and read timeout behavior.
+- Expired TLS certificates and additional certificate-validation edge cases.
+- End-to-end controlled verification of the scanner's DNS-validation-to-pinned-connection flow, including the actual socket peer IP, received SNI, and hostname validation in one test. Existing tests cover parts of this flow separately or intercept before socket connection.
 - Slow responses and responses with missing or misleading Content-Length headers.
 - Chunked responses and response-size limits.
 - Cleanup of response and session resources after failures.
-- DNS resolution failures and unexpected resolver exceptions.
+- DNS failures, empty results, simulated DNS timeouts, and DNS-capacity exhaustion are covered by automated tests. Additional resolver exception variants and real operating-system DNS behavior remain outstanding.
 - Duplicate or conflicting security headers.
 - Automated API tests cover malformed JSON, invalid request fields, request-size limits, and unsupported HTTP methods; deployed proxy limits still require separate verification.
 - Multi-process and shared rate-limit behavior, including trusted-proxy source identification. The current automated tests cover only the in-process limit.
@@ -188,13 +212,13 @@ List collected tests without executing them using:
 
 .\.venv\Scripts\python.exe -m pytest --collect-only -q
 
-The expected baseline is 23 collected tests across three test files.
+The current baseline is 102 tests across the three test files. The latest full execution completed with 102 passed.
 
 A test collection count alone does not indicate that the tests passed. Record the actual execution result separately.
 
 ## 10. Current Acceptance Criteria
 
-- The current automated suite collects 98 tests, as verified on the latest test run.
+- The current automated suite contains 102 tests; the latest full execution completed with 102 passed.
 - The test count must be updated whenever tests are added or removed.
 - All current automated tests pass.
 - The test plan distinguishes mocked behavior from real network verification.
