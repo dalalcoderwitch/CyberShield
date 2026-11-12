@@ -6,6 +6,7 @@ or perform additional network requests.
 
 import logging
 
+from .passive_checks import PassiveIndicatorEvaluator
 from .cache_checks import CacheSecurityEvaluator
 from .cookie_checks import CookieAttributeEvaluator
 from .access_checks import CORSConfigurationEvaluator, OpenRedirectEvaluator
@@ -29,7 +30,7 @@ _RESPONSE_EVALUATORS = (
     ("header_permissions_policy", PermissionsPolicyEvaluator),
 )
 
-# Reserved for the Week 4 cache-security phase.
+# Evidence-only Week 4 evaluators; no additional network collection.
 _WEEK4_RESPONSE_EVALUATORS = (
     ("cache_security", CacheSecurityEvaluator),
 )
@@ -65,13 +66,33 @@ def evaluate_response_evidence_prototypes(
     if type(include_week4) is not bool:
         raise TypeError("include_week4 must be a bool")
 
-    registry = create_default_registry()
-    results = []
-
     evaluator_group = _RESPONSE_EVALUATORS
     if include_week4:
         evaluator_group += _WEEK4_RESPONSE_EVALUATORS
 
+    return _evaluate_response_group(evidence, evaluator_group)
+
+
+def evaluate_passive_evidence(evidence: EvidenceCollection):
+    """Isolated passive checks sharing already collected observations."""
+    if not isinstance(evidence, EvidenceCollection):
+        raise TypeError("evidence must be an EvidenceCollection")
+    return _evaluate_response_group(evidence, (
+        ("xss_passive_indicators", PassiveIndicatorEvaluator),
+        ("sqli_passive_indicators", PassiveIndicatorEvaluator),
+    ))
+
+
+def evaluate_cache_evidence(evidence: EvidenceCollection):
+    """Evaluate Cache Security alone using the existing isolated runner."""
+    if not isinstance(evidence, EvidenceCollection):
+        raise TypeError("evidence must be an EvidenceCollection")
+    return _evaluate_response_group(evidence, _WEEK4_RESPONSE_EVALUATORS)
+
+
+def _evaluate_response_group(evidence, evaluator_group):
+    registry = create_default_registry()
+    results = []
     for check_id, evaluator_type in evaluator_group:
         definition = registry.get(check_id)
 

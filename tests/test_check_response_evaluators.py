@@ -343,7 +343,7 @@ def test_cache_security_no_store_takes_precedence_over_other_directives():
         assert result.severity == "info"
 
 
-def test_cache_security_warns_when_must_understand_is_present():
+def test_cache_security_is_inconclusive_when_must_understand_is_present():
     evaluator = make_evaluator(
         "cache_security",
         CacheSecurityEvaluator,
@@ -355,12 +355,12 @@ def test_cache_security_warns_when_must_understand_is_present():
         )
     )
 
-    assert result.status == "warning"
-    assert result.severity == "low"
+    assert result.status == "not_verified"
+    assert result.severity == "info"
     assert "must-understand" not in result.evidence
 
 
-def test_cache_security_warns_for_private():
+def test_cache_security_is_inconclusive_for_private():
     evaluator = make_evaluator(
         "cache_security",
         CacheSecurityEvaluator,
@@ -370,10 +370,10 @@ def test_cache_security_warns_for_private():
         make_evidence({"Cache-Control": "private, max-age=300"})
     )
 
-    assert result.status == "warning"
+    assert result.status == "not_verified"
 
 
-def test_cache_security_warns_for_no_cache():
+def test_cache_security_is_inconclusive_for_no_cache():
     evaluator = make_evaluator(
         "cache_security",
         CacheSecurityEvaluator,
@@ -383,11 +383,11 @@ def test_cache_security_warns_for_no_cache():
         make_evidence({"Cache-Control": "no-cache"})
     )
 
-    assert result.status == "warning"
+    assert result.status == "not_verified"
     assert "لا يمنع تخزين" in result.explanation
 
 
-def test_cache_security_warns_when_header_is_missing():
+def test_cache_security_is_inconclusive_when_header_is_missing():
     evaluator = make_evaluator(
         "cache_security",
         CacheSecurityEvaluator,
@@ -395,7 +395,7 @@ def test_cache_security_warns_when_header_is_missing():
 
     result = evaluator.evaluate(make_evidence())
 
-    assert result.status == "warning"
+    assert result.status == "not_verified"
 
 
 def test_pragma_no_cache_does_not_replace_cache_control():
@@ -408,7 +408,7 @@ def test_pragma_no_cache_does_not_replace_cache_control():
         make_evidence({"Pragma": "no-cache", "Expires": "0"})
     )
 
-    assert result.status == "warning"
+    assert result.status == "not_verified"
     assert "Cache-Control" in result.evidence
 
 
@@ -424,7 +424,7 @@ def test_cache_parser_does_not_treat_quoted_text_as_directive():
         )
     )
 
-    assert result.status == "warning"
+    assert result.status == "not_verified"
 
 
 def test_cache_security_does_not_echo_raw_directives():
@@ -440,6 +440,97 @@ def test_cache_security_does_not_echo_raw_directives():
     )
 
     assert "max-age=300" not in result.evidence
+
+
+@pytest.mark.parametrize("value", [
+    'no-store="false"', 'no-store=token', '"no-store"',
+    'no-store; private', 'no-store, max-age=-1',
+    'no-store, max-age', 'no-store, max-age=١٠',
+    'no-store, max-age=1.5', 'no-store, max-age="12x"',
+    'no-store, extension=', 'no-store, extension="unterminated',
+    'no-store, extension="bad"tail', 'no-store\r\npublic',
+    'no-store, private=""',
+    'no-store, private="bad field"', 'no-store, public=1',
+    'no-store, no-store', 'no-store, NO-STORE',
+    'no-store, max-age=10, max-age=20',
+    'no-store, max-age=10, max-age=10',
+    'no-store, public, private', 'public, private',
+])
+def test_cache_ambiguous_directives_never_pass(value):
+    evaluator = make_evaluator("cache_security", CacheSecurityEvaluator)
+    result = evaluator.evaluate(make_evidence({"Cache-Control": value}))
+    assert (result.status, result.severity, result.confidence) == (
+        "not_verified", "info", "low",
+    )
+
+
+@pytest.mark.parametrize("values", [
+    ('no-store', 'max-age="60"'),
+    (' No-StOrE , ,', 'extension="private,public"'),
+    ('no-store', 'private="X-One, X-Two"'),
+    ('no-store', 'private=X-One'),
+    ('no-store', r'extension="escaped\"quote,comma"'),
+])
+def test_cache_valid_multi_value_and_quoted_directives(values):
+    evaluator = make_evaluator("cache_security", CacheSecurityEvaluator)
+    result = evaluator.evaluate(make_evidence({"Cache-Control": values}))
+    assert result.status == "passed"
+
+
+def test_cache_duplicate_directives_across_case_variant_field_lines():
+    evaluator = make_evaluator("cache_security", CacheSecurityEvaluator)
+    result = evaluator.evaluate(make_evidence({
+        "Cache-Control": "no-store", "cache-control": "NO-STORE",
+    }))
+    assert result.status == "not_verified"
+
+
+@pytest.mark.parametrize("headers", [
+    {}, {"Cache-Control": ""}, {"Cache-Control": "public, max-age=60"},
+    {"Cache-Control": "private"}, {"Cache-Control": "no-cache"},
+    {"Cache-Control": "extension=token"},
+    {"Cache-Control": 'private="X-One"'},
+    {"Cache-Control": 'no-cache="X-One, X-Two"'},
+    {"Pragma": "no-cache", "Expires": "0"},
+])
+def test_cache_unknown_content_sensitivity_is_not_a_vulnerability(headers):
+    evaluator = make_evaluator("cache_security", CacheSecurityEvaluator)
+    result = evaluator.evaluate(make_evidence(headers))
+    assert result.status == "not_verified"
+    assert result.severity == "info"
+    assert result.confidence == "low"
+
+
+def test_cache_response_wide_private_is_not_overridden_by_s_maxage():
+    evaluator = make_evaluator("cache_security", CacheSecurityEvaluator)
+    result = evaluator.evaluate(make_evidence({"Cache-Control": "private, s-maxage=60"}))
+
+    assert (result.status, result.severity, result.confidence) == (
+        "not_verified", "info", "low",
+    )
+    assert "تمنع private العامة تخزين الاستجابة كلها" in result.explanation
+    assert "مخازن المستخدم الخاصة" in result.explanation
+    assert "ولا يلغي منع التخزين" in result.explanation
+    assert "s-maxage=60" not in repr(result.to_dict())
+
+
+def test_cache_response_wide_private_is_distinct_from_qualified_no_cache():
+    evaluator = make_evaluator("cache_security", CacheSecurityEvaluator)
+    result = evaluator.evaluate(make_evidence({"Cache-Control": 'private, no-cache="X-One"'}))
+
+    assert (result.status, result.severity, result.confidence) == (
+        "not_verified", "info", "low",
+    )
+    assert "تمنع private العامة تخزين الاستجابة كلها" in result.explanation
+    assert "no-cache المخصصة لحقول معينة" in result.explanation
+    assert "استبعاد تلك الحقول أو نجاح إعادة التحقق" in result.explanation
+    assert "ولا تحصر أثر private العامة" in result.explanation
+    assert "X-One" not in repr(result.to_dict())
+
+    qualified = evaluator.evaluate(make_evidence({"Cache-Control": 'private="X-One"'}))
+    assert qualified.status == "not_verified"
+    assert "لا تعمم هذه التعليمات على الاستجابة كلها" in qualified.explanation
+    assert "تمنع private العامة" not in qualified.explanation
 
 
 @pytest.mark.parametrize(
@@ -885,3 +976,53 @@ def test_redirect_without_location_does_not_verify_destination():
     )
 
     assert result.status == "not_verified"
+
+
+@pytest.mark.parametrize("headers", [{}, {"Content-Security-Policy": "default-src 'none'"},
+    {"Content-Security-Policy": "script-src * 'unsafe-inline' secret-token"}])
+@pytest.mark.parametrize("status", [None, 200, 404, 500])
+def test_passive_xss_never_claims_header_proves_exploitability(headers, status):
+    from security_scanner.checks.response_runner import evaluate_passive_evidence
+    from security_scanner.checks.evidence import EvidenceCollection
+    result = evaluate_passive_evidence(EvidenceCollection(http_status=status, _headers=headers))[0]
+    assert (result.status, result.severity, result.confidence) == ("not_verified", "info", "low")
+    assert "secret-token" not in str(result.to_dict())
+    assert "Passive indicators" in str(result.limitations)
+
+
+@pytest.mark.parametrize("patterns,status,original,expected", [
+    ((), 200, None, "not_verified"), (("stack_trace",), 500, 500, "not_verified"),
+    (("framework_debug",), 500, 500, "not_verified"),
+    (("sql_error",), 500, 500, "warning"), (("sql_error",), None, 500, "not_verified"),
+    (("sql_error",), 200, 500, "not_verified"),
+])
+def test_passive_sql_uses_only_attributable_sanitized_categories(patterns, status, original, expected):
+    from security_scanner.checks.response_runner import evaluate_passive_evidence
+    from security_scanner.checks.evidence import EvidenceCollection
+    from security_scanner.checks.disclosure_evidence import DisclosureEvidence
+    result = evaluate_passive_evidence(EvidenceCollection(http_status=status,
+        disclosure_evidence=DisclosureEvidence(error_status=original, error_patterns=patterns)))[1]
+    assert result.status == expected
+    assert result.confidence == "low"
+    assert result.severity == ("low" if expected == "warning" else "info")
+    assert "does not prove SQL injection" in result.explanation
+
+
+@pytest.mark.parametrize("body", [b"database MySQL PostgreSQL", b"HTTP 500 error", b"SELECT name FROM users", b"SQL tutorial: syntax error"])
+def test_ordinary_database_mentions_do_not_create_passive_sql_findings(body):
+    from security_scanner.checks.disclosure_evidence import classify_error_sample
+    assert "sql_error" not in classify_error_sample(body)
+
+
+def test_passive_evaluator_failure_isolated_and_private(monkeypatch, caplog):
+    from security_scanner.checks import response_runner as runner
+    from security_scanner.checks.evidence import EvidenceCollection
+    original = runner.PassiveIndicatorEvaluator._evaluate
+    def fail_one(self, evidence):
+        if self.definition.check_id == "xss_passive_indicators":
+            raise ValueError("SECRET raw token SQL query")
+        return original(self, evidence)
+    monkeypatch.setattr(runner.PassiveIndicatorEvaluator, "_evaluate", fail_one)
+    results = runner.evaluate_passive_evidence(EvidenceCollection(http_status=200))
+    assert [r.status for r in results] == ["error", "not_verified"]
+    assert "SECRET" not in caplog.text + str([r.to_dict() for r in results])

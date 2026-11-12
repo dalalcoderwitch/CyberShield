@@ -251,28 +251,28 @@ EXPANDED_CHECK_DEFINITIONS = (
         "Subdomain takeover indicators",
         "dns",
         "expanded",
-        "planned",
+        "implemented",
     ),
     CheckDefinition(
         "cache_security",
         "Cache security headers",
         "cache",
         "expanded",
-        "planned",
+        "implemented",
     ),
     CheckDefinition(
         "xss_passive_indicators",
         "Passive XSS indicators",
         "passive",
         "expanded",
-        "planned",
+        "implemented",
     ),
     CheckDefinition(
         "sqli_passive_indicators",
         "Passive SQL injection indicators",
         "passive",
         "expanded",
-        "planned",
+        "implemented",
     ),
 )
 

@@ -1306,7 +1306,7 @@ Sydvx0FeNWmqPBhmlaj0SqH0
         )
         resolver_calls = []
 
-        def fake_resolver(url, deadline=None):
+        def fake_resolver(url, deadline=None, **kwargs):
             resolver_calls.append((url, deadline))
             return validated_target, None
 
@@ -1376,6 +1376,13 @@ Sydvx0FeNWmqPBhmlaj0SqH0
             fake_redirect_dns,
         )
         redirect_mode["enabled"] = True
+        # Controlled local TLS fixture explicitly permits its pinned loopback only.
+        original_parse = scanner_module._parse_target_url
+        monkeypatch.setattr(scanner_module, "_parse_target_url",
+                            lambda value: ((scanner_module.urlparse(value), "localhost"), None) if value == integrated_url else original_parse(value))
+        original_ip_policy = scanner_module._is_allowed_ip
+        monkeypatch.setattr(scanner_module, "_is_allowed_ip",
+                            lambda ip: str(ip) == "127.0.0.1" or original_ip_policy(ip))
         integrated_tls_metadata = {}
         redirect_dns_evidence = {}
         integrated_status, integrated_headers, integrated_error = (
@@ -1455,6 +1462,7 @@ Sydvx0FeNWmqPBhmlaj0SqH0
         response_policy_headers.update({
             "Referrer-Policy": "strict-origin-when-cross-origin",
             "Permissions-Policy": "camera=()",
+            "Cache-Control": 'no-store, extension="LOCAL_CACHE_SECRET_711"',
         })
         cookie_secrets = (
             "LIVE_FAKE_COOKIE_SECRET_103",
@@ -1485,6 +1493,10 @@ Sydvx0FeNWmqPBhmlaj0SqH0
         assert report_findings["header_permissions_policy"]["status"] == "warning"
         assert report_findings["header_permissions_policy"]["severity"] == "info"
         assert report_findings["cookie_secure"]["status"] == "passed"
+        assert report_findings["cache_security"]["status"] == "passed"
+        assert sum(item["check_id"] == "cache_security" for item in integrated_report["findings"]) == 1
+        assert len(integrated_report["findings"]) == 30
+        assert "LOCAL_CACHE_SECRET_711" not in repr(integrated_report) + caplog.text
         assert report_findings["cookie_httponly"]["status"] == "passed"
         assert report_findings["cookie_samesite"]["status"] == "passed"
         assert report_findings["cors_misconfiguration"]["status"] == "warning"
@@ -1535,8 +1547,8 @@ Sydvx0FeNWmqPBhmlaj0SqH0
         )
         redirect_findings = {item["check_id"]: item for item in redirect_report["findings"]}
         assert redirect_findings["open_redirect"]["status"] == "warning"
-        assert len(redirect_report["findings"]) == 26
-        assert redirect_report["summary"]["total"] == 26
+        assert len(redirect_report["findings"]) == 30
+        assert redirect_report["summary"]["total"] == 30
         assert "redirect.example" not in repr(redirect_report["findings"])
         assert options_seen["count"] == 2
         assert len(disclosure_requests) == 24
@@ -1551,9 +1563,13 @@ Sydvx0FeNWmqPBhmlaj0SqH0
         error_findings = {item["check_id"]: item for item in error_report["findings"]}
         assert error_report["http_status"] == 500
         assert error_findings["error_information_disclosure"]["status"] == "warning"
+        assert error_findings["sqli_passive_indicators"]["status"] == "warning"
+        assert error_findings["sqli_passive_indicators"]["severity"] == "low"
+        assert error_findings["xss_passive_indicators"]["status"] == "not_verified"
+        assert "does not prove SQL injection" in error_findings["sqli_passive_indicators"]["explanation"]
         assert "private.py" not in repr(error_report["findings"])
         assert "SQLSTATE" not in repr(error_report["findings"])
-        assert len(error_report["findings"]) == error_report["summary"]["total"] == 26
+        assert len(error_report["findings"]) == error_report["summary"]["total"] == 30
         assert len(disclosure_requests) == 35
         assert requests_seen["count"] == 42
         error_mode["enabled"] = False
@@ -1683,6 +1699,12 @@ K6GLNhcbjHUoWFSCqcdxTRb9dk6WPSFJk84TdbtE2/KKY8Qpi5k=
         trust_expired_test_certificate,
     )
 
+    original_parse = scanner_module._parse_target_url
+    monkeypatch.setattr(scanner_module, "_parse_target_url",
+                        lambda value: ((scanner_module.urlparse(value), "localhost"), None) if value == url else original_parse(value))
+    original_ip_policy = scanner_module._is_allowed_ip
+    monkeypatch.setattr(scanner_module, "_is_allowed_ip",
+                        lambda ip: str(ip) == "127.0.0.1" or original_ip_policy(ip))
     try:
         status, headers, error = scanner_module._safe_get_response(url)
         assert status is None
@@ -2315,3 +2337,94 @@ def test_https_not_allowed_is_warning(monkeypatch):
 
     assert result["status"] == "warning"
     assert "\u0645\u062d\u0638\u0648\u0631" in result["message"]
+
+
+@pytest.mark.parametrize("addresses", [
+    ["127.0.0.1"], ["10.0.0.1"], ["169.254.169.254"], ["::1"],
+    ["8.8.8.8", "127.0.0.1"], ["invalid"], [], ["fe80::1%eth0"],
+])
+def test_supplied_target_reapplies_ip_policy(monkeypatch, addresses):
+    from urllib.parse import urlparse
+    from security_scanner import scanner
+    def forbidden(*args, **kwargs):
+        pytest.fail("No DNS or HTTP allowed for rejected supplied target")
+    monkeypatch.setattr(scanner, "_resolve_dns_with_status", forbidden)
+    monkeypatch.setattr(scanner.requests, "Session", forbidden)
+    captures = [{"secret": "stale"} for _ in range(5)]
+    result = scanner._safe_get_response(
+        "https://example.com/", (urlparse("https://example.com/"), "example.com", addresses),
+        tls_metadata=captures[0], redirect_dns_answers=captures[1],
+        cookie_evidence_capture=captures[2], access_evidence_capture=captures[3],
+        disclosure_evidence_capture=captures[4])
+    assert result[2] is not None
+    assert all(not capture for capture in captures)
+
+
+def test_supplied_target_consistency_and_public_literals():
+    from urllib.parse import urlparse
+    from security_scanner.scanner import _validate_resolved_target
+    url = "https://8.8.8.8/"
+    valid = (urlparse(url), "8.8.8.8", ["8.8.8.8"])
+    assert _validate_resolved_target(url, valid)[1] is None
+    assert _validate_resolved_target(url, (urlparse(url), "8.8.8.8", ["1.1.1.1"]))[0] is None
+    assert _validate_resolved_target(url, (urlparse("https://example.com/"), "example.com", ["8.8.8.8"]))[0] is None
+    for malformed in ((), {}, "bad", (None, None, None)):
+        assert _validate_resolved_target(url, malformed)[0] is None
+
+
+@pytest.mark.parametrize("helper", ["_safe_cors_preflight", "_safe_http_redirect_probe", "_safe_disclosure_get"])
+@pytest.mark.parametrize("target_kind", ["private", "mixed", "mismatch", "malformed", "unresolved"])
+def test_all_internal_http_paths_reject_forged_pins(monkeypatch, helper, target_kind):
+    from urllib.parse import urlparse
+    from security_scanner import scanner
+    targets = {
+        "private": (urlparse("https://example.com/"), "example.com", ["127.0.0.1"]),
+        "mixed": (urlparse("https://example.com/"), "example.com", ["8.8.8.8", "10.0.0.1"]),
+        "mismatch": (urlparse("https://example.com/"), "other.example", ["8.8.8.8"]),
+        "malformed": (None,),
+        "unresolved": (urlparse("https://example.com/"), "example.com", []),
+    }
+    def forbidden(*args, **kwargs):
+        pytest.fail("Forged target must never cause DNS or HTTP")
+    monkeypatch.setattr(scanner.requests, "Session", forbidden)
+    monkeypatch.setattr(scanner, "_resolve_dns_with_status", forbidden)
+    capture = {"location": "SECRET stale", "available": True}
+    if helper == "_safe_disclosure_get":
+        result = getattr(scanner, helper)(targets[target_kind], "/.env")
+        assert result["attempted"] is False
+        assert result["error"] is not None
+    else:
+        assert getattr(scanner, helper)(targets[target_kind], capture=capture) is not None
+        assert capture["available"] is False
+        assert "SECRET" not in str(capture)
+
+
+@pytest.mark.parametrize("url,hostname,addresses", [
+    ("https://example.com/path?x=1", "example.com", ["8.8.8.8", "1.1.1.1"]),
+    ("https://8.8.8.8/", "8.8.8.8", ["8.8.8.8"]),
+    ("https://[2606:4700:4700::1111]/", "2606:4700:4700::1111", ["2606:4700:4700::1111"]),
+])
+def test_valid_supplied_pins_are_copied_without_dns(monkeypatch, url, hostname, addresses):
+    from urllib.parse import urlparse
+    from security_scanner import scanner
+    def forbidden(*args, **kwargs):
+        pytest.fail("Cached validation must not resolve DNS")
+    monkeypatch.setattr(scanner, "_resolve_dns_with_status", forbidden)
+    original = list(addresses)
+    result, error = scanner._validate_resolved_target(url, (urlparse(url), hostname, addresses))
+    assert error is None
+    addresses.clear()
+    assert result[2] == original
+
+
+def test_supplied_target_url_mismatch_and_address_limit_are_rejected():
+    from urllib.parse import urlparse
+    from security_scanner.scanner import _validate_resolved_target
+    url = "https://example.com/"
+    for target in ((urlparse(url + "other"), "example.com", ["8.8.8.8"]),
+                   (urlparse(url), "example.com", ["8.8.8.8"] * 33),
+                   (urlparse(url), "example.com", [123]),
+                   (urlparse(url), "example.com", ["192.0.2.1"]),
+                   (urlparse(url), "example.com", ["0.0.0.0"]),
+                   (urlparse(url), "example.com", ["224.0.0.1"])):
+        assert _validate_resolved_target(url, target)[0] is None

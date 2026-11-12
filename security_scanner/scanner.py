@@ -221,8 +221,8 @@ class PinnedIPAdapter(HTTPAdapter):
         )
 
 
-def _resolve_target_with_status(url: str, deadline=None):
-    """Validate a target and preserve the reason when resolution fails."""
+def _parse_target_url(url: str):
+    """Apply existing URL/name restrictions without DNS or a connection."""
     if (
         not isinstance(url, str)
         or not url
@@ -271,6 +271,27 @@ def _resolve_target_with_status(url: str, deadline=None):
     if hostname == "localhost" or hostname.endswith(blocked_suffixes):
         return None, "not_allowed"
 
+    return (parsed, hostname), None
+
+
+def _diagnostic_hostname(url):
+    """Strict DNS-only eligibility; this never authorizes an HTTP target."""
+    from .checks.dns_checks import _normalize_domain
+
+    parsed_target, error = _parse_target_url(url)
+    if error is not None:
+        return None
+    return _normalize_domain(parsed_target[1])
+
+
+def _resolve_target_with_status(url: str, deadline=None, diagnostic_capture=None):
+    """Preserve policy failures and separately capture DNS-only eligibility."""
+    if diagnostic_capture is not None:
+        diagnostic_capture.pop("takeover_hostname", None)
+    parsed_target, error = _parse_target_url(url)
+    if error is not None:
+        return None, error
+    parsed, hostname = parsed_target
     if deadline is None:
         addresses, dns_error = _resolve_dns_with_status(hostname)
     else:
@@ -280,9 +301,15 @@ def _resolve_target_with_status(url: str, deadline=None):
         )
 
     if dns_error is not None:
+        # Only a failed lookup with NO returned addresses permits DNS-only
+        # diagnosis. Rejected, malformed or partially returned answers do not.
+        if dns_error == "dns_error" and not addresses and diagnostic_capture is not None:
+            diagnostic_capture["takeover_hostname"] = _diagnostic_hostname(url)
         return None, dns_error
 
     if not addresses:
+        if diagnostic_capture is not None:
+            diagnostic_capture["takeover_hostname"] = _diagnostic_hostname(url)
         return None, "dns_error"
 
     if len(addresses) > 32:
@@ -315,6 +342,8 @@ def _resolve_target_with_status(url: str, deadline=None):
         return None, "dns_error"
 
     public_ips.sort(key=lambda value: ":" in value)
+    if diagnostic_capture is not None:
+        diagnostic_capture["takeover_hostname"] = _diagnostic_hostname(url)
     return (parsed, hostname, public_ips), None
 
 
@@ -327,9 +356,9 @@ def _resolve_target(url: str, deadline=None):
     return target
 
 
-def resolve_target_with_status(url: str, deadline=None):
-    """Public detailed resolver for coordinated scanner/API integration."""
-    return _resolve_target_with_status(url, deadline=deadline)
+def resolve_target_with_status(url: str, deadline=None, *, diagnostic_capture=None):
+    """Detailed resolution; optional metadata never authorizes connections."""
+    return _resolve_target_with_status(url, deadline=deadline, diagnostic_capture=diagnostic_capture)
 
 
 def resolve_target(url: str, deadline=None):
@@ -565,6 +594,10 @@ def _safe_disclosure_get(target, path, deadline=None, limit=4096):
             or any(ord(char) < 32 or ord(char) == 127 for char in path)):
         result["error"] = "invalid"
         return result
+    target, target_error = _validate_internal_http_target(target)
+    if target is None:
+        result["error"] = target_error
+        return result
     parsed, hostname, public_ips = target
     try:
         if not public_ips or any(not _is_allowed_ip(ipaddress.ip_address(value)) for value in public_ips):
@@ -783,6 +816,46 @@ def validate_url(url: str) -> bool:
     return resolve_target(url) is not None
 
 
+def _validate_internal_http_target(target):
+    try:
+        return _validate_resolved_target(target[0].geturl(), target)
+    except (TypeError, IndexError, AttributeError, KeyError):
+        return None, "invalid"
+
+
+def _validate_resolved_target(url, target):
+    """Revalidate cached resolution without DNS; return a fresh pinned snapshot."""
+    expected, error = _parse_target_url(url)
+    if error is not None:
+        return None, error
+    try:
+        if not isinstance(target, (tuple, list)) or len(target) != 3:
+            return None, "invalid"
+        parsed, hostname, addresses = target
+        if parsed != expected[0] or hostname != expected[1]:
+            return None, "invalid"
+        if not isinstance(addresses, (tuple, list)) or not 0 < len(addresses) <= 32:
+            return None, "not_allowed"
+        normalized = []
+        for address in addresses:
+            if not isinstance(address, str) or "%" in address:
+                return None, "not_allowed"
+            ip = ipaddress.ip_address(address)
+            if not _is_allowed_ip(ip):
+                return None, "not_allowed"
+            normalized.append(ip.compressed)
+        # A literal URL can only authorize that literal address.
+        try:
+            literal = ipaddress.ip_address(hostname)
+        except ValueError:
+            literal = None
+        if literal is not None and any(ipaddress.ip_address(a) != literal for a in normalized):
+            return None, "not_allowed"
+        return (expected[0], expected[1], list(dict.fromkeys(normalized))), None
+    except (TypeError, ValueError, AttributeError):
+        return None, "invalid"
+
+
 def _safe_get_response(
     url: str,
     resolved_target=None,
@@ -800,14 +873,20 @@ def _safe_get_response(
     If the API layer supplies the result of the previous validation, reuse it
     instead of performing another DNS lookup.
     """
+    for capture in (tls_metadata, redirect_dns_answers, cookie_evidence_capture,
+                    access_evidence_capture, disclosure_evidence_capture):
+        if capture is not None:
+            capture.clear()
+    if validated_target_capture is not None:
+        validated_target_capture.pop("takeover_hostname", None)
+        validated_target_capture.pop("target", None)
     if resolved_target is not None:
-        target = resolved_target
-        resolution_error = None
+        target, resolution_error = _validate_resolved_target(url, resolved_target)
     else:
-        target, resolution_error = resolve_target_with_status(
-            url,
-            deadline=deadline,
-        )
+        resolution_options = {"deadline": deadline}
+        if validated_target_capture is not None:
+            resolution_options["diagnostic_capture"] = validated_target_capture
+        target, resolution_error = resolve_target_with_status(url, **resolution_options)
 
     if target is None:
         if resolution_error is not None:
@@ -816,9 +895,24 @@ def _safe_get_response(
             return None, {}, "timeout"
         return None, {}, "invalid"
 
+    target, validation_error = _validate_resolved_target(url, target)
+    if target is None:
+        return None, {}, validation_error
     parsed, hostname, public_ips = target
     if validated_target_capture is not None:
         validated_target_capture["target"] = target
+        # A supplied target is still subject to DNS-only eligibility checks.
+        candidate = _diagnostic_hostname(url)
+        try:
+            eligible = (
+                candidate == hostname and candidate is not None
+                and 0 < len(public_ips) <= 32
+                and all(_is_allowed_ip(ipaddress.ip_address(value)) for value in public_ips)
+            )
+        except (TypeError, ValueError):
+            eligible = False
+        if eligible:
+            validated_target_capture["takeover_hostname"] = candidate
     request_timeout = (2, 2) if disclosure_evidence_capture is not None else (3, 5)
 
     if deadline is not None:
@@ -940,6 +1034,13 @@ def _safe_get_response(
 
 def _safe_cors_preflight(target, deadline=None, capture=None):
     """Send exactly one bounded, pinned OPTIONS preflight to the target URL."""
+    if capture is not None:
+        capture.clear()
+    target, target_error = _validate_internal_http_target(target)
+    if target is None:
+        if capture is not None:
+            capture.update(available=False, error=target_error)
+        return target_error
     parsed, hostname, public_ips = target
     if deadline is not None and time.monotonic() >= deadline:
         if capture is not None:
@@ -1017,6 +1118,13 @@ def _safe_cors_preflight(target, deadline=None, capture=None):
 
 def _safe_http_redirect_probe(target, deadline=None, capture=None):
     """Make one pinned, body-free GET to the authorized target's HTTP root."""
+    if capture is not None:
+        capture.clear()
+    target, target_error = _validate_internal_http_target(target)
+    if target is None:
+        if capture is not None:
+            capture.update(available=False, error=target_error)
+        return target_error
     parsed, hostname, public_ips = target
     if deadline is not None and time.monotonic() >= deadline:
         return "timeout"

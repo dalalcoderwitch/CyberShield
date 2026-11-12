@@ -1,4 +1,11 @@
-"""Passive DNSSEC indicator collection and evaluation."""
+"""Passive DNSSEC indicator collection, not cryptographic validation.
+
+Observe SOA, zone-owned DNSKEY and matching DNSKEY-covering RRSIG records
+through the system-configured recursive resolver. DO requests records and AD
+is an untrusted observation; neither establishes a verified chain of trust.
+Counts are bounded after parsing; these are not wire-size limits. SOA-based
+zone discovery can remain inconclusive for aliases and negative responses.
+"""
 
 from dataclasses import dataclass
 import ipaddress
@@ -30,6 +37,7 @@ _ALLOWED_DNSSEC_STATES = frozenset({
     "invalid_target",
     "not_applicable",
     "oversized_response",
+    "inconsistent_response",
 })
 
 
@@ -79,8 +87,18 @@ class DNSSECEvidence:
             raise ValueError("This state cannot contain DNSSEC response evidence")
 
 
+def _rrset_owner(rrset):
+    """Normalize an observed owner without inventing one for missing data."""
+    owner = getattr(rrset, "name", None)
+    try:
+        owner_text = owner if isinstance(owner, str) else owner.to_text()
+        return _normalize_domain(owner_text)
+    except Exception:
+        return None
+
+
 def _find_zone_apex(soa_answer, normalized_domain):
-    """Find an ancestor SOA owner from the SOA response."""
+    """Accept one consistent ancestor SOA owner, never pick among zones."""
 
     response = getattr(soa_answer, "response", None)
     if response is None:
@@ -97,31 +115,24 @@ def _find_zone_apex(soa_answer, normalized_domain):
             getattr(response, section_name, ()) or ()
         )
 
+    zones = set()
     for rrset in candidates:
         if getattr(rrset, "rdtype", None) != dns.rdatatype.SOA:
             continue
 
-        owner = getattr(rrset, "name", None)
-        if owner is None:
-            continue
-
-        owner_text = (
-            owner.to_text()
-            if callable(getattr(owner, "to_text", None))
-            else str(owner)
-        )
-        zone_name = _normalize_domain(owner_text)
-
-        if zone_name is None:
-            continue
+        zone_name = _rrset_owner(rrset)
+        if zone_name is None or len(rrset) != 1:
+            return None
 
         if (
             normalized_domain == zone_name
             or normalized_domain.endswith("." + zone_name)
         ):
-            return zone_name
+            zones.add(zone_name)
+        else:
+            return None
 
-    return None
+    return next(iter(zones)) if len(zones) == 1 else None
 
 
 def collect_dnssec_evidence(domain, deadline=None):
@@ -201,46 +212,49 @@ def collect_dnssec_evidence(domain, deadline=None):
 
         response = getattr(answer, "response", None)
         if response is None:
-            return DNSSECEvidence("dns_error")
+            return DNSSECEvidence("inconsistent_response")
 
-        response_flags = getattr(response, "flags", 0)
+        response_flags = getattr(response, "flags", None)
+        answer_section = getattr(response, "answer", None)
+        if (
+            isinstance(response_flags, bool)
+            or not isinstance(response_flags, int)
+            or not 0 <= response_flags <= 65535
+            or not isinstance(answer_section, (list, tuple))
+        ):
+            return DNSSECEvidence("inconsistent_response")
         authenticated_data = bool(response_flags & dns.flags.AD)
 
         rrset = getattr(answer, "rrset", None)
-        if (
-            rrset is None
-            or getattr(rrset, "rdtype", None) != dns.rdatatype.DNSKEY
-        ):
+        if rrset is None:
             return DNSSECEvidence(
                 "no_dnskey",
                 authenticated_data=authenticated_data,
                 zone_name=zone_name,
             )
 
+        if (
+            getattr(rrset, "rdtype", None) != dns.rdatatype.DNSKEY
+            or _rrset_owner(rrset) != zone_name
+            or len(rrset) == 0
+        ):
+            return DNSSECEvidence("inconsistent_response")
+
         dnskey_count = len(rrset)
         rrsig_count = 0
-        rrset_owner = getattr(rrset, "name", None)
-        rrset_owner_text = (
-            rrset_owner.to_text()
-            if callable(getattr(rrset_owner, "to_text", None))
-            else str(rrset_owner)
-        ).rstrip(".").lower()
 
-        for response_rrset in getattr(response, "answer", ()):
-            owner = getattr(response_rrset, "name", None)
-            owner_text = (
-                owner.to_text()
-                if callable(getattr(owner, "to_text", None))
-                else str(owner)
-            ).rstrip(".").lower() if owner is not None else ""
-
-            if (
-                getattr(response_rrset, "rdtype", None)
-                == dns.rdatatype.RRSIG
-                and getattr(response_rrset, "covers", None)
-                == dns.rdatatype.DNSKEY
-                and owner_text == rrset_owner_text
-            ):
+        for response_rrset in answer_section:
+            record_type = getattr(response_rrset, "rdtype", None)
+            if record_type == dns.rdatatype.DNSKEY and response_rrset is not rrset:
+                # A second DNSKEY RRset is ambiguous, even at the same owner.
+                return DNSSECEvidence("inconsistent_response")
+            if record_type == dns.rdatatype.RRSIG:
+                if (
+                    _rrset_owner(response_rrset) != zone_name
+                    or getattr(response_rrset, "covers", None) != dns.rdatatype.DNSKEY
+                    or len(response_rrset) == 0
+                ):
+                    return DNSSECEvidence("inconsistent_response")
                 rrsig_count += len(response_rrset)
 
         if (
@@ -307,7 +321,16 @@ class DNSSECCheckEvaluator:
             evidence=evidence,
             explanation=explanation,
             recommendation=recommendation,
-            limitations=tuple(limitations),
+            limitations=tuple(limitations) + (
+                "Passive observations only: DNSKEY/RRSIG presence does not "
+                "mean cryptographic signatures or a DS/DNSKEY trust chain were verified.",
+                "AD is a resolver assertion, not trusted verification by CyberShield; "
+                "there is no configured trust relationship or secure channel.",
+                "SOA-based zone discovery can be inconclusive for aliases or negative "
+                "answers. Missing records do not prove DNSSEC is disabled.",
+                "Record-count limits apply after parsing; DNS requests use the "
+                "system-configured resolver and the remaining query lifetime.",
+            ),
         )
 
     def evaluate(self, evidence: DNSSECEvidence):
@@ -316,10 +339,19 @@ class DNSSECCheckEvaluator:
 
         state = evidence.query_state
 
+        if state == "inconsistent_response":
+            return self._result(
+                "not_verified", "info", "low",
+                "DNSSEC response ownership, record type, or RRset contents were inconsistent.",
+                "The observations could not be reliably attributed to the SOA-derived "
+                "zone. No DNSSEC security conclusion was inferred.",
+                "Review the zone's DNS response and resolver behavior, then retry.",
+            )
+
         if state == "no_zone_apex":
             return self._result(
                 "not_verified", "info", "low",
-                "No ancestor SOA record was available to identify the zone apex.",
+                "No single consistent ancestor SOA owner was available to identify the zone apex.",
                 "The DNSSEC check could not reliably identify which zone "
                 "owns the target name. No conclusion about DNSSEC deployment "
                 "was inferred.",
@@ -400,7 +432,8 @@ class DNSSECCheckEvaluator:
             return self._result(
                 "not_verified", "info", "low",
                 f"Observed {evidence.dnskey_count} DNSKEY record(s), "
-                "but no matching DNSKEY RRSIG was observed.",
+                "but no matching DNSKEY RRSIG was observed. "
+                + ("The resolver set AD." if evidence.authenticated_data else "The resolver did not set AD."),
                 "The available response does not establish an authenticated "
                 "DNSKEY RRset.",
                 "Verify DNSSEC signing and resolver support.",

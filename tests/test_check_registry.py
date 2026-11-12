@@ -31,6 +31,10 @@ def test_default_registry_contains_30_unique_checks():
 
 
 EXPECTED_IMPLEMENTED_EXPANDED_IDS = {
+    "xss_passive_indicators",
+    "sqli_passive_indicators",
+    "subdomain_takeover_indicators",
+    "cache_security",
     "cookie_httponly",
     "cookie_samesite",
     "cookie_secure",
@@ -54,12 +58,7 @@ EXPECTED_IMPLEMENTED_EXPANDED_IDS = {
     "tls_protocol_config",
 }
 
-EXPECTED_WEEK4_PLANNED_IDS = {
-    "cache_security",
-    "sqli_passive_indicators",
-    "subdomain_takeover_indicators",
-    "xss_passive_indicators",
-}
+EXPECTED_WEEK4_PLANNED_IDS = set()
 
 
 def test_default_registry_has_correct_phases_and_statuses():
@@ -87,8 +86,8 @@ def test_default_registry_has_correct_phases_and_statuses():
 
     assert expanded_implemented == EXPECTED_IMPLEMENTED_EXPANDED_IDS
     assert expanded_planned == EXPECTED_WEEK4_PLANNED_IDS
-    assert len(expanded_implemented) == 21
-    assert len(expanded_planned) == 4
+    assert len(expanded_implemented) == 25
+    assert len(expanded_planned) == 0
 
 
 def test_expanded_check_definition_accepts_both_lifecycle_statuses():

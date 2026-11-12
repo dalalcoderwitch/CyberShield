@@ -68,6 +68,14 @@ def test_dns_checks_are_explicitly_marked_as_dns_operations():
         assert contract.requires_additional_network_operation
 
 
+def test_takeover_contract_requires_dns_evidence_without_provider_probes():
+    contract = CHECK_INPUT_CONTRACTS["subdomain_takeover_indicators"]
+    assert contract.required_inputs == (
+        "attributable_cname_chain", "terminal_dns_status", "query_state",
+    )
+    assert contract.collection_modes == ("dns_queries",)
+
+
 def test_http_probe_checks_are_explicitly_marked():
     probe_ids = {
         "http_to_https_redirect",
@@ -86,7 +94,7 @@ def test_http_probe_checks_are_explicitly_marked():
         assert contract.requires_additional_network_operation
 
 
-def test_passive_checks_require_bounded_body_collection():
+def test_passive_checks_reuse_sanitized_shared_response():
     passive_ids = {
         "xss_passive_indicators",
         "sqli_passive_indicators",
@@ -95,7 +103,7 @@ def test_passive_checks_require_bounded_body_collection():
     for check_id in passive_ids:
         contract = CHECK_INPUT_CONTRACTS[check_id]
 
-        assert contract.collection_modes == ("bounded_response_body",)
+        assert contract.collection_modes == ("shared_http_response",)
         assert not contract.requires_additional_network_operation
 
 

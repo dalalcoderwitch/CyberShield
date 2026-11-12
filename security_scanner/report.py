@@ -4,14 +4,18 @@ from uuid import uuid4
 
 from .scanner import _safe_get_response, _safe_http_redirect_probe, _safe_cors_preflight, _resolve_redirect_location_addresses, _collect_disclosure_evidence, check_security_headers
 
+from .checks.correlation import safe_correlate_findings
 from .checks.context import CheckContext
 from .checks.evidence import EvidenceCollection
 from .checks.response_runner import (
     evaluate_week3_evidence,
+    evaluate_cache_evidence,
+    evaluate_passive_evidence,
     evaluate_shared_week3_checks,
 )
 from .checks.dns_checks import evaluate_dmarc_domain, evaluate_spf_domain
 from .checks.dnssec_checks import evaluate_dnssec_domain
+from .checks.takeover_checks import evaluate_takeover_domain
 from .checks.result import CheckResult
 
 
@@ -580,6 +584,20 @@ def scan_target(
                     disclosure_evidence=disclosure_evidence)
             )
 
+        # Cache reuses the original response; no collection or network operation.
+        expanded_results = tuple(expanded_results) + evaluate_cache_evidence(
+            EvidenceCollection(
+                http_status=status_code if error is None else None,
+                _headers=headers if error is None else {},
+            )
+        )
+
+        expanded_results += evaluate_passive_evidence(EvidenceCollection(
+            http_status=status_code if error is None else None,
+            _headers=headers if error is None else {},
+            disclosure_evidence=disclosure_evidence if error is None else None,
+        ))
+
         # SPF uses only the hostname captured after target validation.
         spf_domain = (
             target[1]
@@ -669,6 +687,24 @@ def scan_target(
 
         expanded_results = tuple(expanded_results) + (dnssec_result,)
 
+        try:
+            # DNS-only metadata never becomes a validated HTTP target, and is
+            # intentionally NOT passed to SPF, DMARC, DNSSEC or HTTP probes.
+            takeover_result = evaluate_takeover_domain(
+                validated_target.get("takeover_hostname"), deadline=deadline,
+            )
+        except Exception:
+            takeover_result = CheckResult(
+                check_id="subdomain_takeover_indicators",
+                title="Passive subdomain takeover indicators",
+                status="error", severity="info", confidence="low",
+                evidence="Passive DNS indicator evaluation could not be completed.",
+                explanation="An internal error occurred; no takeover conclusion was inferred.",
+                recommendation="Review the internal implementation and retry.",
+                limitations=("Raw DNS records and resolver exception details are omitted.",),
+            )
+        expanded_results = tuple(expanded_results) + (takeover_result,)
+
         findings.extend(
             result.to_dict() for result in expanded_results
         )
@@ -684,4 +720,5 @@ def scan_target(
         "findings": findings,
         "limitations": REPORT_LIMITATIONS,
         "notice": REPORT_NOTICE,
+        **({"correlations": safe_correlate_findings(findings)} if include_expanded_checks else {}),
     }

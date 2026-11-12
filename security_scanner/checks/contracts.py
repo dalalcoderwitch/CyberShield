@@ -246,12 +246,14 @@ _CONTRACT_ITEMS = (
     ),
     _contract(
         "dnssec",
+        # Legacy input label: passive collection/evaluation state only.
+        # It does not assert cryptographic signature or trust-chain validation.
         ("dnssec_validation_status",),
         "dns_queries",
     ),
     _contract(
         "subdomain_takeover_indicators",
-        ("cname_records", "provider_fingerprints"),
+        ("attributable_cname_chain", "terminal_dns_status", "query_state"),
         "dns_queries",
     ),
 
@@ -265,13 +267,13 @@ _CONTRACT_ITEMS = (
     # Passive indicators.
     _contract(
         "xss_passive_indicators",
-        ("bounded_response_body_sample",),
-        "bounded_response_body",
+        ("http_status", "content_security_policy"),
+        "shared_http_response",
     ),
     _contract(
         "sqli_passive_indicators",
-        ("bounded_response_body_sample",),
-        "bounded_response_body",
+        ("http_status", "sanitized_original_error_categories"),
+        "shared_http_response",
     ),
 )
 

@@ -1385,3 +1385,195 @@ FINAL AUDIT CORRECTION - 2026-11-08
 - tests/test_scanner.py and tests/test_report.py are permitted by AGENTS.md.
 - Final permitted-path audit found no untracked files in Dalal's scope.
 - git diff --check reported no whitespace errors; only line-ending warnings.
+
+
+CACHE SECURITY IMPLEMENTATION MILESTONE - 2026-11-12
+- User authorized Cache Security only on feature/dalal-week4-completion at 01dd6d5.
+- Reviewed evaluator, evidence/context, runner, registry, report and tests before editing.
+- Reused existing evaluator; added syntax/duplicate/conflict checks. Inconclusive results use not_verified/info/low; valid unambiguous no-store retains limited header-level passed.
+- Added include_cache opt-in to shared runner; both expanded-report paths use it, default five-check report unchanged. No new collection/network calls.
+- Focused command: .venv/Scripts/python.exe -B -m pytest -q -p no:cacheprovider --basetemp=<TEMP>/dalal-pytest tests/test_check_response_evaluators.py tests/test_check_response_runner.py tests/test_check_expanded_report.py tests/test_check_pipeline.py tests/test_report.py
+- Result: 188 passed in 5.20s; zero failures.
+- Registry remains planned pending scanner integration verification.
+- Files so far: checks/cache_checks.py, checks/response_runner.py, report.py; tests/test_check_response_evaluators.py, tests/test_check_expanded_report.py, tests/test_scanner.py; this state file.
+- Next: local TLS integration, registry lifecycle update after verification, scanner/full suite and diff audit.
+- Limitations: no content sensitivity inference or cache behavior verification; malformed/duplicate evidence is deliberately inconclusive. DNSSEC and other Week 4 tasks unchanged.
+
+CACHE SECURITY LOCAL INTEGRATION VERIFIED - 2026-11-12
+- Extended existing controlled TLS server test with no-store and a private extension marker. Cache result passed exactly once; marker absent from report/logs. Existing HTTP request and SNI counters preserved.
+- Scanner plus focused evaluator/runner/report/pipeline suite: 287 passed in 6.60s, zero failures.
+- After this verification, changed only cache_security registry status to implemented and updated tests/test_check_registry.py expectations (22 implemented expanded, 3 planned).
+- Next: full scanner regression and full project tests; final diff audit.
+
+CACHE SECURITY COMPATIBILITY CORRECTION - 2026-11-12
+- Scanner regression: 454 passed in 8.21s. First full project run: 9 failed, 677 passed in 9.22s.
+- All 9 failures were DNS report test doubles rejecting the added include_cache keyword. No DNS tests or logic modified.
+- Preserved original Week 3 runner signatures. Extracted existing isolated response loop into a shared helper; new evaluate_cache_evidence runs only the cache group.
+- Expanded report adds that result using its existing original HTTP headers/status. No extra requests or changes to default report.
+- This supersedes the milestone note about include_cache opt-in. Registry verification will be repeated with corrected integration.
+
+CACHE SECURITY FINAL ACCEPTANCE - 2026-11-12
+- Final integration preserves all existing Week 3 runner signatures. Cache-only evaluation reuses the isolated response evaluator loop and original HTTP response evidence.
+- Parser handles case, quoted/escaped commas, token/quoted arguments, field-qualified private/no-cache, invalid no-store arguments, invalid delta-seconds, duplicates across field lines and public/private conflicts. Ambiguity uses not_verified rather than a claimed vulnerability.
+- Valid no-store without ambiguity or must-understand: passed/info/high, header-level only. Other context-dependent or unavailable evidence: not_verified/info/low. Evaluator exceptions: isolated error/info/low, no exception message disclosure.
+- Expanded report: 27 unique findings, cache_security exactly once; default five-check schema/API behavior preserved. Local TLS integration retains existing request/SNI counters; raw cache marker/cookies/body/exception text are not exposed.
+- Tests: initial focused 188 passed in 5.20s; scanner plus focused 287 passed in 6.60s; scanner regression 454 passed in 8.21s.
+- First full run: 9 failed, 677 passed in 9.22s (new keyword incompatible with DNS test doubles); fixed in production integration without changing DNS tests. Next full run: 686 passed in 8.43s.
+- Final parser-focused/regression subset: 176 passed in 0.82s. Final full project command: .venv/Scripts/python.exe -B -m pytest -q -p no:cacheprovider --basetemp=<TEMP>/dalal-pytest tests --tb=short
+- FINAL RESULT: 688 passed in 9.07s; zero failures/skips. This includes scanner, cache, report, API, DNS and existing regression tests; no public website scans.
+- Exact modified files: security_scanner/checks/cache_checks.py; security_scanner/checks/response_runner.py; security_scanner/checks/registry.py; security_scanner/report.py; tests/test_check_response_evaluators.py; tests/test_check_expanded_report.py; tests/test_check_registry.py; tests/test_scanner.py; WEEK3_DALAL_STATE.txt.
+- Existing mobile modifications, deleted reports and untracked teammate files preserved. No backend/mobile/AGENTS/dependency/document edits; no staging/stash/restore/commit/push/merge/branch/history changes.
+- Limits: no confirmation of actual intermediary/browser storage behavior; no content sensitivity inference; strict duplicate handling can remain inconclusive even for identical duplicates; legacy headers do not prove no-store.
+- Cache task complete within the Python expanded-report scope. DNSSEC, takeover, passive XSS/SQLi and correlation implementation require separate user approval.
+
+CACHE SECURITY FINAL EXPLANATION FIX - 2026-11-12
+- User authorized only the final Cache Security explanation fix.
+- Changed explanation selection to prioritize unqualified private for the entire response; s-maxage does not override its shared-storage prohibition. Qualified no-cache is explained separately and does not narrow response-wide private.
+- Both requested examples remain not_verified/info/low. No parser, network collection, report structure, registry, or other check changes in this follow-up.
+- Added two regression tests for private+s-maxage and private+qualified-no-cache; tests also contrast qualified private and check that raw values/field names are not exposed.
+- Focused: .venv/Scripts/python.exe -B -m pytest -q -p no:cacheprovider --basetemp=<TEMP>/dalal-pytest tests/test_check_response_evaluators.py tests/test_check_response_runner.py tests/test_check_expanded_report.py tests/test_check_registry.py --tb=short
+- Focused result: 187 passed in 0.94s, zero failures.
+- Full: same interpreter/options with tests --tb=short. Result: 690 passed in 8.38s, zero failures/skips.
+- Follow-up modified files only: security_scanner/checks/cache_checks.py; tests/test_check_response_evaluators.py; WEEK3_DALAL_STATE.txt (required progress record).
+- Cache Security is ready for final acceptance within its stated header-evidence scope. Actual cache behavior and content sensitivity are not independently verified. No other Week 4 implementation started.
+
+PASSIVE DNSSEC ATTRIBUTION FIX MILESTONE - 2026-11-12
+- User authorized passive DNSSEC correctness only; branch verified feature/dalal-week4-completion. Existing Cache/Flutter changes preserved.
+- DNSKEY owner must normalize to the single SOA-derived zone; missing/mismatched ownership, ambiguous SOA candidates, multiple DNSKEY RRsets, inconsistent RRSIG owners/coverage, and missing response metadata remain not_verified.
+- RRSIG observations require the expected owner and DNSKEY coverage; no cryptographic verification added. Valid AD remains an untrusted observation.
+- Passive scope/limitations added to module and all evaluator results; legacy dnssec_validation_status input label clarified by comment without changing contracts or JSON.
+- New tests in permitted tests/test_check_evidence.py and tests/test_check_expanded_report.py use real dnspython message/RRset fixtures and mocked resolver/HTTP boundaries. Original restricted DNSSEC tests are read-only.
+- Focused run initially: 97 passed in 0.74s. Extra missing-metadata checks exposed an overly strict exact-int check: 7 failed, 93 passed in 0.96s (dnspython flags are integer-compatible enums). Corrected to accept integer subclasses, reject bool.
+- Final focused command: .venv/Scripts/python.exe -B -m pytest -q -p no:cacheprovider --basetemp=<TEMP>/dalal-pytest tests/test_dnssec_checks.py tests/test_dnssec_report_integration.py tests/test_check_evidence.py tests/test_check_expanded_report.py tests/test_check_contracts.py --tb=short
+- Focused result: 100 passed in 0.72s, zero failures.
+- Modified so far: security_scanner/checks/dnssec_checks.py; security_scanner/checks/contracts.py; tests/test_check_evidence.py; tests/test_check_expanded_report.py; WEEK3_DALAL_STATE.txt.
+- Next: complete pytest suite and permitted-diff/integrity audit. No other Week 4 task started.
+
+PASSIVE DNSSEC FINAL VERIFICATION - 2026-11-12
+- Full pytest command: .venv/Scripts/python.exe -B -m pytest -q -p no:cacheprovider --basetemp=<TEMP>/dalal-pytest tests --tb=short
+- Result: 708 passed in 8.55s; zero failures/skips. Focused DNSSEC/evidence/report/contract group: 100 passed in 0.72s.
+- git diff --check: passed. Reviewed production/evidence diff. SHA-256 audit verified 12 protected baseline entries (including AGENTS, accepted Cache files, Flutter changes and previously deleted reports), with no unexpected changes.
+- Exact task changes: security_scanner/checks/dnssec_checks.py; security_scanner/checks/contracts.py (comment only); tests/test_check_evidence.py; tests/test_check_expanded_report.py (appended DNSSEC tests, preserved Cache tests); WEEK3_DALAL_STATE.txt.
+- No changes to registry lifecycle, report production code, scanner collection code, original restricted DNSSEC tests, backend, mobile, AGENTS, dependencies, or report JSON/default five checks. Expanded report stays at 27 findings.
+- Mocked evidence-to-report cases cover matching observations+AD, wrong DNSKEY owner, missing RRSIG+AD, and resolver exception. Keys/signatures/cookies/exception markers remain absent from report/logs.
+- DNSSEC ready for final acceptance ONLY within passive indicators scope. DO requests records, AD is untrusted, no signatures/DS/DNSKEY chain validated. SOA discovery may be inconclusive; count bounds apply after parsing and do not impose wire-size limits. Resolver failures remain error; evidence inconsistency remains not_verified.
+- No public website scans, Git state-changing commands, commits/pushes, or other Week 4 implementations performed. Await user acceptance/next instruction.
+
+PASSIVE TAKEOVER IMPLEMENTATION MILESTONE - 2026-11-12
+- User authorized passive bounded exact-hostname indicators only on feature/dalal-week4-completion.
+- Extracted existing URL/name prechecks without changing normal target decisions. Internal takeover_hostname metadata is separate from the validated HTTP target.
+- DNS-only eligibility is captured only for fully allowed address results or original DNS failure with no returned addresses; blocked/mixed/malformed results never gain eligibility. Stricter DNS name normalization excludes literals/local names.
+- New takeover_checks collector performs at most one logical configured-resolver A query; validates question attribution, bounded CNAME graph, terminal state, address consistency and blocked observations. No guessed names, HTTP/provider probes or claiming.
+- Attributable CNAME+NXDOMAIN: warning/low/low, potential indicator only. All other observations remain inconclusive/not_verified or operational error/skipped; never passed. Raw CNAME/resource values and exceptions are not retained.
+- Report adds exactly one finding, count 28, default five unchanged. Existing DNS checks are not given DNS-only hostname metadata.
+- Initial focused tests: 1 failed, 222 passed in 7.32s; fixture used an invalid underscore-containing hostname, correctly rejected. Fixed fixture to a valid hyphenated label. Next focused run: 223 passed in 6.56s.
+- After successful validation updated only takeover registry status; added contract, stale-capture and public-IP regressions. Next: focused lifecycle tests, scanner/full tests and diff/integrity audit.
+- Flask integration remains separate: backend can reject unresolved hostnames before calling scan_target and does not enable expanded checks by default. No backend changes authorized/performed.
+
+PASSIVE TAKEOVER FINAL ACCEPTANCE EVIDENCE - 2026-11-12
+- Final focused command: .venv/Scripts/python.exe -B -m pytest -q -p no:cacheprovider --basetemp=<TEMP>/dalal-pytest tests/test_check_evidence.py tests/test_check_expanded_report.py tests/test_check_registry.py tests/test_check_contracts.py tests/test_scanner.py tests/test_report.py --tb=short
+- Final focused result: 249 passed in 6.99s; zero failures. Intermediate extra fixture run: 1 failed, 248 passed in 6.80s because dnspython builder normalizes singleton CNAME data; replaced with an explicit malformed-RRset fixture. No production acceptance rule was weakened.
+- Full suite initially: 758 passed in 8.84s. After added deadline/single-RRset conflict tests, final full command: .venv/Scripts/python.exe -B -m pytest -q -p no:cacheprovider --basetemp=<TEMP>/dalal-pytest tests --tb=short
+- FINAL FULL RESULT: 760 passed in 8.08s, zero failures/skips. git diff --check passed.
+- At most ONE additional logical A-resolution call for an explicitly captured eligible original hostname. Zero for blocked/IP/ineligible/expired-capacity cases. No CNAME/AAAA/per-hop/provider query calls added. Underlying recursive retries and packets are resolver-managed, not claimed to be one packet.
+- Unresolved-host test confirms one original validation lookup plus one diagnostic A operation; no HTTP Session or HTTP probes. Rejected private/mixed/malformed results cannot activate diagnostics. Public-target test confirms only the original mocked HTTPS request; no provider connections.
+- Original target errors and HTTP rejection stay intact. Only the new check gets DNS-only metadata; SPF/DMARC/DNSSEC and HTTP collection continue requiring their existing validated target. Stale capture fields are cleared before reuse.
+- Registry lifecycle now implemented after focused verification, confirmed by final tests. Expanded output has 28 unique findings; default/API report remains five.
+- Exact files changed in this task: security_scanner/checks/takeover_checks.py (new); security_scanner/scanner.py; security_scanner/report.py; security_scanner/checks/contracts.py; security_scanner/checks/registry.py; tests/test_check_evidence.py; tests/test_check_expanded_report.py; tests/test_check_contracts.py; tests/test_check_registry.py; tests/test_scanner.py; WEEK3_DALAL_STATE.txt.
+- SHA-256/status audit: 22 pre-existing entries outside this task unchanged, no unexpected new files. Accepted Cache/DNSSEC logic, Flutter/untracked files, AGENTS and prior deletions preserved. No Git state-changing commands or dependency edits.
+- Scope limits: exact hostname only; resolver NXDOMAIN and negative caches are unauthenticated observations; parser-normalized/discarded wire data cannot be recovered; record bounds apply after parsing. Never proven takeover, service abandonment, ownership availability, or hostname safety. No provider fingerprint catalog or service probes.
+- Python passive indicator check ready for user final acceptance. Flask enabling expanded output and allowing a separately reviewed DNS-only diagnostic request before early target rejection remain Bailsan integration tasks; existing backend was not modified.
+- No public-domain DNS queries/scans or other Week 4 implementation. Await user acceptance/next instruction.
+
+WEEK4 COMPLETION SSRF MILESTONE - 2026-11-12
+- Verified branch feature/dalal-week4-completion, baseline 28 expanded/5 default; existing 760-pass record confirmed in state (not yet rerun). Preserved baseline hashes in TEMP for final audit.
+- scanner.py revalidates supplied target shape, exact parsed URL/normalized hostname, every IP, literal consistency; no DNS lookup, fresh pin snapshot, all captures cleared.
+- Focused tests/test_scanner.py: 108 passed in 2.01s. Controlled local TLS fixtures explicitly permit their local pin; production restrictions unchanged.
+- Next: passive checks, correlation, integration and full regression.
+
+WEEK4 PASSIVE AND CORRELATION MILESTONE - 2026-11-12
+- Added checks/passive_checks.py: XSS conservatively not_verified using CSP presence only (neither missing nor restrictive CSP proves exploitability/safety); SQL uses existing original 4xx/5xx sanitized sql_error category, warning/low/low potential disclosure only. No new collection, raw retention or requests.
+- Added checks/correlation.py: cookie_secure+cookie_httponly warnings; server_information_disclosure+error_information_disclosure warnings. Context only, low/low, fixed contributor IDs, no evidence copying, no summary changes, duplicate contributors suppressed; non-warning/partial/malformed evidence ignored. SQL/error overlap deliberately excluded.
+- Expanded report now 30 unique base checks with additive correlations field only in expanded mode; default remains five and original keys. Runner isolates evaluator exceptions.
+- Hardened CORS/HTTP-redirect/disclosure request entry points as well; all reject forged internal targets without DNS. Capture dictionaries cleared before reuse.
+- Focused evaluator/report/scanner: 313 passed in 2.65s; registry changed to implemented only after integration passed. Next: lifecycle/full suite, additional security edge cases, audit and defense documentation.
+
+WEEK4 REVIEW AND DEFENSE NOTES - 2026-11-12
+- First full regression: 797 passed in 8.90s. Additional boundary/determinism tests then added.
+- Final focused command: .venv/Scripts/python.exe -B -m pytest -q -p no:cacheprovider --basetemp=<TEMP>/dalal-pytest tests/test_scanner.py tests/test_check_expanded_report.py tests/test_check_response_evaluators.py tests/test_check_registry.py tests/test_check_contracts.py --tb=short
+- Final focused result: 367 passed in 3.27s, zero failures. Full final run and integrity audit follow below.
+- Session-created files: security_scanner/checks/passive_checks.py; security_scanner/checks/correlation.py.
+- Session-modified files: security_scanner/scanner.py; security_scanner/report.py; security_scanner/checks/response_runner.py; security_scanner/checks/contracts.py; security_scanner/checks/registry.py; tests/test_scanner.py; tests/test_check_response_evaluators.py; tests/test_check_expanded_report.py; tests/test_check_registry.py; tests/test_check_contracts.py; WEEK3_DALAL_STATE.txt.
+- Cache/DNSSEC/takeover implementation from earlier sessions preserved. Registry now contains 30 implemented definitions: five foundational, 25 expanded. Implemented describes bounded behavior, not guaranteed verification on every target.
+
+شرح التنفيذ وحدوده للجنة التخرج
+يعمل الدرع السيبراني على جمع أدلة محددة ثم تقييمها وإنتاج نتائج قابلة للتتبع. النتيجة ليست حكماً شاملاً على أمان الموقع. التقرير الافتراضي يحوي خمسة فحوص؛ الموسع يحوي ثلاثين فحصاً أساسياً، والتحليل الترابطي طبقة مستقلة لا تزيد عدد الثغرات أو مجموع النتائج.
+
+الفحوص الموجودة ومصادر أدلتها:
+1. https_connection: اتصال HTTPS مع التحقق الفعلي من شهادة TLS.
+2. header_hsts، header_csp، header_x_content_type_options، header_x_frame_options: ترويسات الاستجابة الأصلية؛ وجود الترويسة لا يثبت سلامة التطبيق.
+3. header_referrer_policy، header_permissions_policy: تحليل ترويسات الاستجابة الحالية، دون طلبات جديدة.
+4. tls_certificate_expiry، tls_certificate_chain، tls_protocol_config: بيانات المصافحة الموثقة وتواريخ الشهادة والسلسلة المتاحة والبروتوكول والتشفير المتفاوض عليه؛ لا يعني ذلك تعداد جميع إعدادات الخادم. لم تتغير سياسات TLS المعتمدة في هذه الجلسة.
+5. http_to_https_redirect: مسبار HTTP محدود إلى عنوان الأصل المثبت وفق السياسة السابقة؛ redirect_destination_safety: تحليل الوجهة وفحص العناوين قبل أي اتصال، دون اتباع التحويل.
+6. cookie_secure، cookie_httponly، cookie_samesite: خصائص Cookie منقحة من الاستجابة، دون الاحتفاظ بالأسماء والقيم السرية في النتائج.
+7. cors_misconfiguration: المسبار المحدود المعتمد سابقاً؛ open_redirect: تحليل وجهة التحويل الموجودة، دون حقن معاملات أو اتباع الوجهة.
+8. sensitive_file_exposure، source_maps_exposure، directory_listing، public_security_files: مسارات/عينات محدودة ضمن آلية الجمع السابقة؛ ليست زحفاً غير محدود. لم تضف هذه الجلسة أي مسبار إليها.
+9. server_information_disclosure: فئات من ترويسات الخادم؛ error_information_disclosure: فئات أنماط من عينة خطأ الاستجابة الأصلية، دون النص الخام.
+10. dns_spf، dns_dmarc: استعلامات DNS السابقة وتحليل سجلات السياسة؛ لا تثبت قابلية تسليم البريد أو سلوك جميع المرسلين.
+11. dnssec: جمع مؤشرات DNSKEY/RRSIG وبيانات الاستجابة مع التحقق من نسبتها إلى المنطقة الصحيحة. هذا ليس تحققاً تشفيرياً للتواقيع أو سلسلة DS؛ إشارة AD ملاحظة غير موثوقة بحد ذاتها.
+12. cache_security: تحليل توجيهات الترويسات مع كشف الغموض والتكرار والتعارض. passed محدود بترويسة no-store غير الملتبسة، ولا يثبت السلوك الفعلي للمتصفح أو الوسيط أو حساسية المحتوى. التصنيفات السابقة محفوظة.
+13. subdomain_takeover_indicators: استعلام A منطقي واحد كحد أقصى للاسم الأصلي المؤهل، مع سلسلة CNAME منسوبة ومحدودة. CNAME مع NXDOMAIN مؤشر محتمل منخفض الثقة، وليس إثبات استيلاء أو توفر مورد للحجز. لا أسماء مخمنة ولا اتصالات بمزود الخدمة. الحزم وإعادة المحاولة يديرها المحلل التكراري.
+14. xss_passive_indicators: يعيد استخدام وجود CSP من الاستجابة الأصلية، ويشرح حدود الدليل. الأدلة الحالية لا تثبت إدخال سكربت أو انعكاساً قابلاً للاستغلال؛ لذلك النتيجة not_verified، سواء غاب CSP أو حضر. لا يُحلل هذا الفحص قابلية الاستغلال أو يثبت استحالة XSS، ولا يدّعي تقييم سماحية سياسة CSP كاملة.
+15. sqli_passive_indicators: يعيد استخدام فئة sql_error المنقحة من عينة الاستجابة الأصلية 4xx/5xx، مع مطابقة حالة HTTP. وجود الفئة يعطي warning/low/low لكشف معلومات محتمل فقط؛ لا يثبت SQL injection. غياب الدليل أو عدم تطابقه يعطي not_verified. قد توجد إيجابيات كاذبة، مثل صفحة تعليمية تعرض توقيع خطأ؛ لهذا الثقة منخفضة. العينة محدودة بـ4 KiB، ولا تشمل أخطاء في صفحات أخرى أو استجابات ناجحة.
+
+الفحوص السلبية الجديدة لا تحقن نصوصاً أو معاملات، ولا تنفذ JavaScript، ولا ترسل نماذج، ولا تزحف، ولا تولد أخطاء عمداً. Cache وXSS وSQLi تعيد استخدام الأدلة الحالية. DNSSEC وtakeover سلبيان من حيث عدم الاستغلال لكنهما يجريان استعلامات DNS محدودة؛ ليس صحيحاً أن التقرير الموسع كله بلا طلبات إضافية، لأن مسابير HTTP المعتمدة سابقاً باقية.
+
+دلالات الحالات:
+- warning: ملاحظة تستحق المراجعة ضمن حدود الفحص؛ ليست دائماً ثغرة قابلة للاستغلال.
+- not_verified: الدليل مفقود أو غير كاف أو لا يسمح بحكم موثوق؛ لا تعني الأمان ولا الضعف.
+- error: تعذر إكمال الجمع أو التقييم؛ لا يتحول إلى خطر مؤكد.
+- skipped: الفحص غير قابل للتطبيق أو لم ينفذ وفق شروطه؛ لا يتحول إلى خطر.
+- passed: تحقق الشرط المحدد ضمن الدليل المرصود فقط؛ لا تعني خلو الموقع من الثغرات. فحصا XSS وSQLi لا ينتجان passed.
+
+قواعد التحليل الترابطي:
+- cookie_defense_gaps: يلزم warning في cookie_secure وcookie_httponly، مع severity وconfidence معروفتين؛ يجمع سياق نقص حماية النقل والوصول من السكربت. قد يتعلق النقص بملفي Cookie مختلفين، ولا يثبت سرقة جلسة أو سلسلة استغلال.
+- public_diagnostics: يلزم warning في server_information_disclosure وerror_information_disclosure؛ تفاصيل التقنية مع تفاصيل الأخطاء قد تساعد الاستطلاع. لا يثبت ذلك اختراقاً.
+- كلاهما severity=low وconfidence=low، بمعرف ثابت وترتيب حتمي وقائمة contributing_check_ids. لا تُنسخ الأدلة الخام، ولا تتغير النتائج أو مجاميعها. تُرفض المساهمات المكررة الملتبسة، وتُتجاهل المدخلات الناقصة وغير التحذيرية. لم نربط SQLi مع كشف الأخطاء لأنهما قد يصفان الملاحظة نفسها، ولم نربط غياب CSP مع XSS كإثبات ثغرة. فشل التحليل يعيد قائمة فارغة ولا يوقف التقرير.
+
+تقوية SSRF:
+- يعاد التحقق من شكل resolved_target وتطابق URL المحلل واسم المضيف المطبع، ومن جميع العناوين وفق سياسة IP القائمة، وليس العنوان الأول فقط.
+- تُرفض العناوين الخاصة والمحلية وlink-local والمحجوزة والمشوهة والمجموعات المختلطة؛ وتُرفض العناوين ذات zone identifiers. لعناوين URL الحرفية يجب أن يطابق كل عنوان مثبت العنوان الحرفي نفسه. حد القائمة 32.
+- لا DNS جديد للتحقق من الهدف المعطى. تُنسخ قائمة التثبيت حتى لا تتغير بتعديل القائمة الأصلية، ويظل SNI والتحقق من الاسم والشهادة فعالين، والتحويل التلقائي معطلاً.
+- التحقق دون DNS لا يعيد إثبات أن عنواناً عاماً يعود فعلاً إلى اسم المضيف؛ الربط ناتج عن الحل المسبق داخل التطبيق. الحماية تعيد فرض سياسة السلامة وتمنع تزوير عنوان داخلي، وتحافظ على تثبيت DNS دون إعادة حل معرضة لإعادة الربط.
+- جميع مداخل HTTP الداخلية (الطلب الأصلي، CORS، HTTP redirect، Disclosure) تطبق التحقق. بيانات التشخيص DNS-only لا تصبح تفويض HTTP أبداً. تُمسح بيانات الالتقاط القديمة قبل إعادة الاستخدام، ولا تظهر رسائل الاستثناء الخام في النتائج الجديدة.
+
+تكامل الفريق والقيود المتبقية:
+- بيلسان: تفعيل include_expanded_checks في مسار Flask عند اعتماد التكامل، والتعامل مع correlations كحقل اختياري. معالجة الطلب التشخيصي DNS-only قبل رفض الأسماء غير المحلولة تحتاج مراجعة منفصلة لسياسة API؛ الرفض الحالي لم يتغير.
+- أحمد: عرض النتائج الثلاثين عند اختيار التقرير الموسع، وإظهار الترابط منفصلاً عن عداد الفحوص، وترجمة وعرض الحدود والحالات دون تحويل not_verified إلى passed.
+- لم تُعدل backend أو mobile أو اعتماديات المشروع أو AGENTS. لم تتغير السياسات السابقة لـTLS أو التحويل أو تصنيف Cache/DNSSEC. لا يوجد فحص عام لشبكة الإنترنت ولا اختبار استغلال نشط في هذه الجلسة.
+
+أسئلة المناقشة وإجاباتها:
+1. ما الفرق بين المؤشر والثغرة المؤكدة؟ المؤشر ملاحظة تستدعي مراجعة؛ التأكيد يحتاج دليلاً على مسار استغلال غير متوفر هنا.
+2. هل غياب CSP يعني XSS؟ لا؛ لا يثبت وصول مدخلات غير موثوقة إلى سياق تنفيذ، لذلك لا يصدر فحص XSS تحذيراً بسببه وحده.
+3. هل CSP مقيد يثبت الأمان؟ لا؛ قد توجد سياقات أو صفحات أخرى، ولم ننفذ التطبيق أو نحاول استغلاله.
+4. كيف يعمل SQLi دون حقن؟ يرصد فئة توقيع خطأ SQL الموجودة أصلاً في الاستجابة؛ يسميها احتمال كشف معلومات ولا يدعي إثبات الحقن.
+5. لماذا لا نعطي passed عند غياب توقيع SQL؟ لأن العينة المحدودة وعدم الاختبار النشط لا يثبتان غياب SQL injection.
+6. كيف أصلحنا SSRF؟ بإعادة تطبيق سياسة URL وIP على كل resolved_target وعلى كل عنوان فيه قبل HTTP، مع رفض عدم التطابق والعناوين غير الآمنة.
+7. لماذا لا نعيد DNS؟ للحفاظ على التثبيت وتجنب إعادة الربط ولعدم إضافة طلبات؛ نتحقق من السلامة والبنية محلياً.
+8. هل DNSSEC هنا موثق تشفيرياً؟ لا؛ نجمع مؤشرات منسوبة فقط، ولا نتحقق من سلسلة الثقة أو التواقيع تشفيرياً.
+9. هل CNAME مع NXDOMAIN يثبت takeover؟ لا؛ لا يثبت أن المورد قابل للحجز أو أن مزود الخدمة يسمح بالاستيلاء.
+10. لماذا لا يزيد الترابط عداد الثغرات؟ لأنه سياق لنتائج موجودة، وقد تكون العلاقات غير كافية لإثبات سلسلة استغلال. بقيت summary وfindings بلا تعديل منه.
+11. كيف حُمِيت الخصوصية؟ باستخدام فئات ثابتة وملخصات فقط، وحذف النصوص والقيم المطابقة وعدم نقل Cookies أو استثناءات أو أجسام خام إلى النتائج الجديدة.
+12. كيف تحققنا دون استهداف مواقع عامة؟ باختبارات وحدات وDNS محاكى وخادم TLS محلي مضبوط، مع إثبات رفض الطلب قبل إنشاء Session للأهداف المزورة وثبات عدادات الشبكة.
+
+WEEK4 FINAL ACCEPTANCE EVIDENCE - 2026-11-12
+- Final full command: .venv/Scripts/python.exe -B -m pytest -q -p no:cacheprovider --basetemp=<TEMP>/dalal-pytest tests --tb=short
+- FINAL FULL RESULT: 817 passed in 8.92s; zero failures/skips. Includes API, SPF, DMARC, DNSSEC, Cache, takeover, timeouts, runner isolation and controlled local TLS integration.
+- Scanner-only regression command: same interpreter/options with tests --ignore=tests/test_api.py --tb=short. RESULT: 788 passed in 8.48s, zero failures/skips.
+- Final focused group: 367 passed in 3.27s. Earlier milestones: SSRF scanner 108 passed in 2.01s; passive/report/scanner 313 passed in 2.65s; lifecycle group 347 passed in 2.79s; first full regression 797 passed in 8.90s before 20 additional cases.
+- During implementation two local TLS fixtures initially failed because they had mocked the resolver to return localhost. Explicit fixture-local URL/IP allowances restored their certificate tests without changing production safety. An intermediate test edit had a text-encoding issue, corrected before passing verification. Report count assertions and a new test's incorrect collector mock names were corrected to the verified architecture. No security acceptance rules or existing assertions were weakened.
+- git diff --check: clean. Reviewed scanner/report/contracts/runner/registry and both new modules, including test diff. Original report keys/default five preserved; expanded 30 unique findings; correlations only additive in expanded mode. All 30 registry definitions implemented; no planned entries left.
+- HTTP and DNS request increments introduced by THIS session: zero. Existing original GET, approved HTTP/CORS/disclosure probes, SPF/DMARC/DNSSEC queries and at most one logical takeover A operation retain their previous bounds. Local integration retains original request/SNI/probe counters while checking the new passive SQL result.
+- SHA-256 audit against session-start snapshot: exactly the 13 files listed above changed/created, no unexpected changes; 577 other baseline files preserved. Existing untracked takeover module, Cache/DNSSEC/evidence work, Flutter files, AGENTS and other untracked files preserved; prior deleted reports remain deleted. Read-only git status confirms the same branch, existing deletions and unrelated changes.
+- No backend/mobile/AGENTS/dependency edits, public scans, dependency installation, branch changes, staging, commit, push, stash, restore or history-changing Git commands.
+- Dalal-owned remaining Week4 work is complete and ready for code review within documented passive limits. XSS intentionally remains not_verified with current evidence; SQL warnings are disclosure indicators only. Flask enabling/diagnostic API design and Flutter presentation remain teammate integration work, not completed or modified here.
