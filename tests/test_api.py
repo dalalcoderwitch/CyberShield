@@ -1400,3 +1400,24 @@ def test_scan_cors_rejects_unallowed_origin():
 
     assert response.status_code == 200
     assert "Access-Control-Allow-Origin" not in response.headers
+
+
+def test_unhandled_internal_server_error_returns_safe_json():
+    from flask import abort
+
+    app = api_module.create_app()
+
+    @app.get("/_test/internal-error")
+    def trigger_internal_error():
+        abort(500, description="private internal details")
+
+    client = app.test_client()
+    response = client.get("/_test/internal-error")
+
+    assert response.status_code == 500
+    assert response.is_json
+    assert response.json["error"]["code"] == "INTERNAL_ERROR"
+    assert response.json["error"]["message"]
+    assert "private internal details" not in response.get_data(
+        as_text=True
+    )
