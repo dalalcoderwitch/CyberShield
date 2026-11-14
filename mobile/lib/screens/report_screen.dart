@@ -264,9 +264,15 @@ class ReportScreen extends StatelessWidget {
 
           if (finding.impact.isNotEmpty) ...[
             const SizedBox(height: 16),
-            const Text('الأثر المحتمل', style: TextStyle(fontWeight: FontWeight.bold)),
+            const Text(
+              'الأثر المحتمل',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
             const SizedBox(height: 6),
-            Text(finding.impact, style: const TextStyle(color: muted, height: 1.7)),
+            Text(
+              finding.impact,
+              style: const TextStyle(color: muted, height: 1.7),
+            ),
           ],
           if (finding.priority.isNotEmpty) ...[
             const SizedBox(height: 12),
@@ -274,12 +280,20 @@ class ReportScreen extends StatelessWidget {
           ],
           if (finding.relations.isNotEmpty) ...[
             const SizedBox(height: 12),
-            const Text('النتائج المرتبطة', style: TextStyle(fontWeight: FontWeight.bold)),
+            const Text(
+              'النتائج المرتبطة',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
             const SizedBox(height: 6),
-            ...finding.relations.map((item) => Padding(
-              padding: const EdgeInsets.only(bottom: 4),
-              child: Text('• $item', style: const TextStyle(color: muted, height: 1.5)),
-            )),
+            ...finding.relations.map(
+              (item) => Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Text(
+                  '• $item',
+                  style: const TextStyle(color: muted, height: 1.5),
+                ),
+              ),
+            ),
           ],
           if (finding.recommendation.isNotEmpty) ...[
             const SizedBox(height: 16),
@@ -292,7 +306,10 @@ class ReportScreen extends StatelessWidget {
           ],
           if (finding.remediation.isNotEmpty) ...[
             const SizedBox(height: 16),
-            const Text('خطوات المعالجة', style: TextStyle(fontWeight: FontWeight.bold, color: accent)),
+            const Text(
+              'خطوات المعالجة',
+              style: TextStyle(fontWeight: FontWeight.bold, color: accent),
+            ),
             const SizedBox(height: 6),
             Text(finding.remediation, style: const TextStyle(height: 1.7)),
           ],

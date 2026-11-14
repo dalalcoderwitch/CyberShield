@@ -19,10 +19,10 @@ class ScanApiService {
     String baseUrl = defaultBaseUrl,
     http.Client? client,
     Duration timeout = const Duration(seconds: 35),
-  })  : _baseUrl = baseUrl.replaceFirst(RegExp(r'/+$'), ''),
-        _client = client ?? http.Client(),
-        _timeout = timeout,
-        _ownsClient = client == null;
+  }) : _baseUrl = baseUrl.replaceFirst(RegExp(r'/+$'), ''),
+       _client = client ?? http.Client(),
+       _timeout = timeout,
+       _ownsClient = client == null;
 
   Future<Map<String, dynamic>> checkHealth() async {
     final response = await _get('/api/v1/health');
@@ -47,14 +47,11 @@ class ScanApiService {
     required String targetUrl,
     required bool authorizationConfirmed,
   }) async {
-    final response = await _post(
-      '/api/v1/scan',
-      {
-        'target_url': targetUrl,
-        'authorization_confirmed': authorizationConfirmed,
-        'include_expanded_checks': true,
-      },
-    );
+    final response = await _post('/api/v1/scan', {
+      'target_url': targetUrl,
+      'authorization_confirmed': authorizationConfirmed,
+      'include_expanded_checks': true,
+    });
 
     if (response.statusCode != 200) {
       throw _readApiError(response);
@@ -74,12 +71,7 @@ class ScanApiService {
 
   Future<http.Response> _get(String path) async {
     try {
-      return await _client
-          .get(
-            _uri(path),
-            headers: _headers,
-          )
-          .timeout(_timeout);
+      return await _client.get(_uri(path), headers: _headers).timeout(_timeout);
     } on TimeoutException {
       throw const ApiException(
         code: 'REQUEST_TIMEOUT',
@@ -93,17 +85,10 @@ class ScanApiService {
     }
   }
 
-  Future<http.Response> _post(
-    String path,
-    Map<String, dynamic> body,
-  ) async {
+  Future<http.Response> _post(String path, Map<String, dynamic> body) async {
     try {
       return await _client
-          .post(
-            _uri(path),
-            headers: _headers,
-            body: jsonEncode(body),
-          )
+          .post(_uri(path), headers: _headers, body: jsonEncode(body))
           .timeout(_timeout);
     } on TimeoutException {
       throw const ApiException(
@@ -123,9 +108,9 @@ class ScanApiService {
   }
 
   Map<String, String> get _headers => const {
-        'Accept': 'application/json',
-        'Content-Type': 'application/json',
-      };
+    'Accept': 'application/json',
+    'Content-Type': 'application/json',
+  };
 
   Map<String, dynamic> _decodeObject(String body) {
     try {
@@ -152,8 +137,7 @@ class ScanApiService {
       if (error is Map) {
         return ApiException(
           code: error['code']?.toString() ?? 'HTTP_ERROR',
-          message: error['message']?.toString() ??
-              'تعذر تنفيذ الطلب.',
+          message: error['message']?.toString() ?? 'تعذر تنفيذ الطلب.',
           statusCode: response.statusCode,
         );
       }
@@ -164,8 +148,8 @@ class ScanApiService {
     final fallbackMessage = response.statusCode == 504
         ? 'انتهت المهلة الزمنية المسموحة للفحص.'
         : response.statusCode == 429
-            ? 'تم تجاوز الحد المسموح للطلبات. حاول لاحقًا.'
-            : 'تعذر تنفيذ الطلب. رمز الاستجابة: ${response.statusCode}';
+        ? 'تم تجاوز الحد المسموح للطلبات. حاول لاحقًا.'
+        : 'تعذر تنفيذ الطلب. رمز الاستجابة: ${response.statusCode}';
     return ApiException(
       code: response.statusCode == 504 ? 'SCAN_TIMEOUT' : 'HTTP_ERROR',
       message: fallbackMessage,
