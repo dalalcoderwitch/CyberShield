@@ -1453,6 +1453,43 @@ def test_scan_cors_allows_localhost_preflight(monkeypatch):
     assert calls == []
 
 
+def test_scan_cors_allows_localhost_post(monkeypatch):
+    app = api_module.create_app()
+    client = app.test_client()
+
+    expected_report = {
+        "status": "completed",
+        "target_url": "https://example.com",
+        "summary": {"total": 0},
+        "findings": [],
+    }
+
+    monkeypatch.setattr(
+        api_module,
+        "resolve_target",
+        lambda url, deadline=None: object(),
+    )
+    monkeypatch.setattr(
+        api_module,
+        "scan_target",
+        lambda url, resolved_target=None, deadline=None: expected_report,
+    )
+
+    origin = "http://localhost:5173"
+
+    response = client.post(
+        "/api/v1/scan",
+        json={
+            "target_url": "https://example.com",
+            "authorization_confirmed": True,
+        },
+        headers={"Origin": origin},
+    )
+
+    assert response.status_code == 200
+    assert response.headers.get("Access-Control-Allow-Origin") == origin
+    assert response.json == expected_report
+
 def test_scan_cors_rejects_unallowed_origin():
     app = api_module.create_app()
     client = app.test_client()
