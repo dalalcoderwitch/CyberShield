@@ -2,6 +2,7 @@ import time
 from threading import BoundedSemaphore, Lock
 
 from flask import Flask, jsonify, request
+from flask_cors import CORS
 
 from backend.scanner import scan_target
 from security_scanner.scanner import resolve_target
@@ -23,6 +24,17 @@ def create_app():
 
     app = Flask(__name__)
     app.config["MAX_CONTENT_LENGTH"] = 16 * 1024
+
+    CORS(
+        app,
+        resources={
+            r"/api/v1/*": {
+                "origins": r"^http://(localhost|127\.0\.0\.1)(:\d+)?$",
+                "methods": ["GET", "POST", "OPTIONS"],
+                "allow_headers": ["Content-Type"],
+            }
+        },
+    )
 
     # تحديد معدل الطلبات داخل عملية Python الحالية.
     # هذا الحد ليس مشتركًا بين عدة عمليات أو خوادم.

@@ -1351,3 +1351,52 @@ def test_scan_options_does_not_start_scan(monkeypatch):
     assert "POST" in response.headers.get("Allow", "")
     assert "OPTIONS" in response.headers.get("Allow", "")
     assert calls == []
+
+def test_scan_cors_allows_localhost_preflight(monkeypatch):
+    app = api_module.create_app()
+    client = app.test_client()
+
+    calls = []
+
+    def unexpected_call(*args, **kwargs):
+        calls.append((args, kwargs))
+        raise AssertionError("CORS preflight must not start a scan")
+
+    monkeypatch.setattr(api_module, "resolve_target", unexpected_call)
+    monkeypatch.setattr(api_module, "scan_target", unexpected_call)
+
+    origin = "http://localhost:5173"
+
+    response = client.options(
+        "/api/v1/scan",
+        headers={
+            "Origin": origin,
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "Content-Type",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers.get("Access-Control-Allow-Origin") == origin
+    assert "POST" in response.headers.get("Access-Control-Allow-Methods", "")
+    assert "content-type" in response.headers.get(
+        "Access-Control-Allow-Headers", ""
+    ).lower()
+    assert calls == []
+
+
+def test_scan_cors_rejects_unallowed_origin():
+    app = api_module.create_app()
+    client = app.test_client()
+
+    response = client.options(
+        "/api/v1/scan",
+        headers={
+            "Origin": "https://untrusted.example",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "Content-Type",
+        },
+    )
+
+    assert response.status_code == 200
+    assert "Access-Control-Allow-Origin" not in response.headers
