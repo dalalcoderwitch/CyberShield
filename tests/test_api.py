@@ -284,6 +284,65 @@ def test_scan_endpoint_returns_contract_compatible_report(monkeypatch):
     assert report["limitations"]
     assert report["target_url"] == "https://example.com"
 
+
+def test_scan_endpoint_preserves_not_verified_findings_on_connection_failure(
+    monkeypatch,
+):
+    """The API must preserve unverified findings when the connection fails."""
+
+    app = api_module.create_app()
+    client = app.test_client()
+
+    monkeypatch.setattr(
+        api_module,
+        "resolve_target",
+        lambda url, deadline=None: object(),
+    )
+
+    monkeypatch.setattr(
+        "security_scanner.report._safe_get_response",
+        lambda url, resolved_target=None, deadline=None: (
+            None,
+            {},
+            "connection",
+        ),
+    )
+
+    response = client.post(
+        "/api/v1/scan",
+        json={
+            "target_url": "https://example.com",
+            "authorization_confirmed": True,
+        },
+    )
+
+    assert response.status_code == 200
+
+    report = response.get_json()
+
+    assert report["status"] == "completed"
+    assert report["http_status"] is None
+    assert report["summary"]["total"] == 5
+    assert report["summary"]["error"] == 1
+    assert report["summary"]["not_verified"] == 4
+    assert report["summary"]["passed"] == 0
+
+    findings = {
+        finding["check_id"]: finding
+        for finding in report["findings"]
+    }
+
+    assert findings["https_connection"]["status"] == "error"
+
+    for check_id in (
+        "header_hsts",
+        "header_csp",
+        "header_x_content_type_options",
+        "header_x_frame_options",
+    ):
+        assert findings[check_id]["status"] == "not_verified"
+
+
 def test_scan_returns_report(monkeypatch):
     app = api_module.create_app()
     client = app.test_client()
