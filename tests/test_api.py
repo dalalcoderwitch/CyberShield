@@ -292,16 +292,22 @@ def test_scan_returns_report(monkeypatch):
 
     expected_report = {
         "target_url": "https://example.com",
-        "http_status": 200,
+        "http_status": None,
         "summary": {
-            "total": 5,
-            "passed": 5,
+            "total": 1,
+            "passed": 0,
             "warning": 0,
-            "not_verified": 0,
+            "not_verified": 1,
             "error": 0,
             "skipped": 0,
         },
-        "findings": [],
+        "findings": [
+            {
+                "check_id": "header_hsts",
+                "status": "not_verified",
+                "evidence": "Connection could not be established.",
+            }
+        ],
         "limitations": [],
     }
 
@@ -330,6 +336,9 @@ def test_scan_returns_report(monkeypatch):
 
     assert response.status_code == 200
     assert response.json == expected_report
+    assert response.json["findings"][0]["status"] == "not_verified"
+    assert response.json["summary"]["not_verified"] == 1
+    assert response.json["summary"]["total"] == 1
     assert captured["url"] == "https://example.com"
     assert captured["resolved_target"] is resolved
 
