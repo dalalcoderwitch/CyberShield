@@ -266,3 +266,37 @@ def test_timeout_is_reported_without_false_success(monkeypatch):
         assert findings[check_id]["status"] == "not_verified"
         assert findings[check_id]["severity"] == "info"
         assert findings[check_id]["confidence"] == "low"
+
+def test_missing_headers_are_reported_as_warnings(monkeypatch):
+    """A successful HTTP response with missing headers must not pass them."""
+
+    monkeypatch.setattr(
+        "security_scanner.report._safe_get_response",
+        lambda *args, **kwargs: (200, {}, None),
+    )
+
+    report = scan_target("https://example.com")
+
+    findings = {
+        finding["check_id"]: finding
+        for finding in report["findings"]
+    }
+
+    assert report["status"] == "completed"
+    assert report["summary"]["total"] == 5
+    assert report["summary"]["passed"] == 1
+    assert report["summary"]["warning"] == 4
+    assert report["summary"]["not_verified"] == 0
+
+    expected_severities = {
+        "header_hsts": "medium",
+        "header_csp": "medium",
+        "header_x_content_type_options": "low",
+        "header_x_frame_options": "medium",
+    }
+
+    for check_id, severity in expected_severities.items():
+        assert findings[check_id]["status"] == "warning"
+        assert findings[check_id]["severity"] == severity
+        assert findings[check_id]["confidence"] in ("high", "medium")
+        assert findings[check_id]["evidence"]
