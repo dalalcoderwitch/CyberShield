@@ -9,13 +9,14 @@ void main() {
   ) async {
     await tester.pumpWidget(const CyberShieldApp());
 
-    expect(find.text('CyberShield'), findsOneWidget);
-    expect(find.text('درعك الأول في الأمن السيبراني'), findsOneWidget);
-    expect(find.text('رابط الموقع'), findsOneWidget);
-    expect(find.text('بدء الفحص'), findsOneWidget);
+    expect(find.text('CYBER'), findsOneWidget);
+    expect(find.text('SHIELD'), findsOneWidget);
+    expect(find.text('درعك الذكي لعالم رقمي أكثر أماناً'), findsOneWidget);
+    expect(find.text('رابط الموقع الإلكتروني'), findsOneWidget);
+    expect(find.text('بدء الفحص الأمني'), findsOneWidget);
 
     final direction = Directionality.of(
-      tester.element(find.text('رابط الموقع')),
+      tester.element(find.text('رابط الموقع الإلكتروني')),
     );
 
     expect(direction, TextDirection.rtl);
@@ -26,7 +27,7 @@ void main() {
 
     await tester.enterText(find.byType(TextField), 'http://example.com');
 
-    final scanButton = find.text('بدء الفحص');
+    final scanButton = find.text('بدء الفحص الأمني');
 
     await tester.ensureVisible(scanButton);
     await tester.tap(scanButton);
@@ -47,7 +48,7 @@ void main() {
 
     await tester.enterText(find.byType(TextField), 'https://example.com');
 
-    final scanButton = find.text('بدء الفحص');
+    final scanButton = find.text('بدء الفحص الأمني');
 
     await tester.ensureVisible(scanButton);
     await tester.tap(scanButton);
