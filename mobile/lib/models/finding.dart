@@ -1,5 +1,16 @@
-
 class Finding {
+  const Finding({
+    required this.checkId,
+    required this.title,
+    required this.status,
+    required this.severity,
+    required this.confidence,
+    required this.evidence,
+    required this.explanation,
+    required this.recommendation,
+    required this.limitations,
+  });
+
   final String checkId;
   final String title;
   final String status;
@@ -9,83 +20,61 @@ class Finding {
   final String explanation;
   final String recommendation;
   final List<String> limitations;
-  final String impact;
-  final String remediation;
-  final List<String> relations;
-  final String priority;
 
-  const Finding({
-    required this.checkId,
-    required this.title,
-    required this.status,
-    required this.severity,
-    required this.confidence,
-    this.evidence,
-    required this.explanation,
-    required this.recommendation,
-    this.limitations = const [],
-    this.impact = '',
-    this.remediation = '',
-    this.relations = const [],
-    this.priority = '',
-  });
+  static const allowedStatuses = {
+    'passed', 'warning', 'not_verified', 'error', 'skipped',
+  };
 
   factory Finding.fromJson(Map<String, dynamic> json) {
+    String requiredText(String key) {
+      final value = json[key];
+      if (value is! String || value.trim().isEmpty) {
+        throw FormatException('Invalid finding field: $key');
+      }
+      return value;
+    }
+
+    String optionalText(String key) {
+      final value = json[key];
+      if (value == null) return '';
+      if (value is! String) throw FormatException('Invalid finding field: $key');
+      return value;
+    }
+
+    final status = requiredText('status');
+    if (!allowedStatuses.contains(status)) {
+      throw FormatException('Unknown finding status: $status');
+    }
     return Finding(
-      checkId: _readString(json['check_id']),
-      title: _readString(json['title']),
-      status: _readString(json['status']),
-      severity: _readString(json['severity']),
-      confidence: _readString(json['confidence']),
+      checkId: requiredText('check_id'),
+      title: requiredText('title'),
+      status: status,
+      severity: requiredText('severity'),
+      confidence: requiredText('confidence'),
       evidence: json['evidence'],
-      explanation: _readString(json['explanation']),
-      recommendation: _readString(json['recommendation']),
-      limitations: _readStringList(json['limitations']),
-      impact: _readString(json['impact']),
-      remediation: _readString(json['remediation']),
-      relations: _readStringList(json['relations']),
-      priority: _readString(json['priority']),
+      explanation: optionalText('explanation'),
+      recommendation: optionalText('recommendation'),
+      limitations: readStringList(json['limitations'], 'limitations'),
     );
   }
 
-  Map<String, dynamic> toJson() {
-    final json = <String, dynamic>{
-      'check_id': checkId,
-      'title': title,
-      'status': status,
-      'severity': severity,
-      'confidence': confidence,
-      'evidence': evidence,
-      'explanation': explanation,
-      'recommendation': recommendation,
-      'limitations': limitations,
-    };
-    if (impact.isNotEmpty) json['impact'] = impact;
-    if (remediation.isNotEmpty) json['remediation'] = remediation;
-    if (relations.isNotEmpty) json['relations'] = relations;
-    if (priority.isNotEmpty) json['priority'] = priority;
-    return json;
-  }
+  Map<String, dynamic> toJson() => {
+        'check_id': checkId,
+        'title': title,
+        'status': status,
+        'severity': severity,
+        'confidence': confidence,
+        'evidence': evidence,
+        'explanation': explanation,
+        'recommendation': recommendation,
+        'limitations': limitations,
+      };
 
-  static String _readString(Object? value) {
-    if (value == null) return '';
-    return value.toString();
-  }
-
-  static List<String> _readStringList(Object? value) {
-    if (value == null) return [];
-
-    if (value is List) {
-      return value
-          .map((item) => _readString(item))
-          .where((item) => item.isNotEmpty)
-          .toList();
+  static List<String> readStringList(Object? value, String field) {
+    if (value == null) return const [];
+    if (value is! List || value.any((element) => element is! String)) {
+      throw FormatException('Invalid string list: $field');
     }
-
-    if (value is String && value.trim().isNotEmpty) {
-      return [value.trim()];
-    }
-
-    return [];
+    return List<String>.unmodifiable(value.cast<String>());
   }
 }
