@@ -2,120 +2,179 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
-import '../models/scan_report.dart';
-
-class ApiException implements Exception {
-  const ApiException(this.code, this.message, [this.statusCode]);
-  final String code;
-  final String message;
-  final int? statusCode;
-  @override
-  String toString() => message;
-}
+import 'package:mobile/models/scan_report.dart';
 
 class ScanApiService {
-  static const defaultBaseUrl = String.fromEnvironment(
-    'API_BASE_URL', defaultValue: 'http://10.0.2.2:5000',
+  static const String defaultBaseUrl = String.fromEnvironment(
+    'API_BASE_URL',
+    defaultValue: 'http://10.0.2.2:5000',
   );
+
+  final http.Client _client;
+  final String _baseUrl;
+  final Duration _timeout;
+  final bool _ownsClient;
+
   ScanApiService({
     String baseUrl = defaultBaseUrl,
     http.Client? client,
     Duration timeout = const Duration(seconds: 35),
-  })  : _baseUrl = baseUrl.replaceFirst(RegExp(r'/+$'), ''),
-        _client = client ?? http.Client(),
-        _ownsClient = client == null,
-        _timeout = timeout;
-
-  final String _baseUrl;
-  final http.Client _client;
-  final bool _ownsClient;
-  final Duration _timeout;
-
-  Uri _uri(String endpoint) => Uri.parse('$_baseUrl$endpoint');
-  static const headers = {'Accept': 'application/json', 'Content-Type': 'application/json'};
+  }) : _baseUrl = baseUrl.replaceFirst(RegExp(r'/+$'), ''),
+       _client = client ?? http.Client(),
+       _timeout = timeout,
+       _ownsClient = client == null;
 
   Future<Map<String, dynamic>> checkHealth() async {
-    final response = await _request(() => _client.get(_uri('/api/v1/health'), headers: headers));
-    final json = _decodeResponse(response);
-    if (json['status'] != 'ok') {
-      throw const ApiException('API_UNAVAILABLE', 'الخادم لا يعلن أنه جاهز.');
+    final response = await _get('/api/v1/health');
+
+    if (response.statusCode != 200) {
+      throw _readApiError(response);
     }
-    return json;
+
+    final data = _decodeObject(response.body);
+
+    if (data['status'] != 'ok') {
+      throw const ApiException(
+        code: 'API_UNAVAILABLE',
+        message: 'خدمة CyberShield غير متاحة حاليًا.',
+      );
+    }
+
+    return data;
   }
 
-  Future<ScanReport> scan({required String targetUrl, required bool authorizationConfirmed}) async {
-    final response = await _request(() => _client.post(
-          _uri('/api/v1/scan'),
-          headers: headers,
-          body: jsonEncode({
-            'target_url': targetUrl,
-            'authorization_confirmed': authorizationConfirmed,
-            'include_expanded_checks': true,
-          }),
-        ));
-    final decoded = _decodeResponse(response);
+  Future<ScanReport> scan({
+    required String targetUrl,
+    required bool authorizationConfirmed,
+  }) async {
+    final response = await _post('/api/v1/scan', {
+      'target_url': targetUrl,
+      'authorization_confirmed': authorizationConfirmed,
+      'include_expanded_checks': true,
+    });
+
+    if (response.statusCode != 200) {
+      throw _readApiError(response);
+    }
+
+    final data = _decodeObject(response.body);
+
     try {
-      return ScanReport.fromJson(decoded);
-    } on FormatException {
-      throw const ApiException('INVALID_REPORT', 'تقرير الفحص غير متوافق مع صيغة البيانات المعتمدة.');
-    } on TypeError {
-      throw const ApiException('INVALID_REPORT', 'تقرير الفحص يحتوي حقولاً غير صالحة.');
+      return ScanReport.fromJson(data);
+    } catch (_) {
+      throw const ApiException(
+        code: 'INVALID_REPORT',
+        message: 'تعذر قراءة تقرير الفحص القادم من الخادم.',
+      );
     }
   }
 
-  Future<http.Response> _request(Future<http.Response> Function() request) async {
+  Future<http.Response> _get(String path) async {
     try {
-      return await request().timeout(_timeout);
+      return await _client.get(_uri(path), headers: _headers).timeout(_timeout);
     } on TimeoutException {
-      throw const ApiException('REQUEST_TIMEOUT', 'انتهت مهلة الاتصال أو الفحص. يمكنك إعادة المحاولة.');
+      throw const ApiException(
+        code: 'REQUEST_TIMEOUT',
+        message: 'انتهت مهلة الاتصال بالخادم. حاول مرة أخرى.',
+      );
     } on http.ClientException {
-      throw const ApiException('CONNECTION_FAILED', 'تعذر الاتصال بالخادم. تحققي من تشغيل Flask والاتصال.');
-    } on FormatException {
-      throw const ApiException('CONNECTION_FAILED', 'عنوان خادم API غير صالح.');
+      throw const ApiException(
+        code: 'CONNECTION_FAILED',
+        message: 'تعذر الاتصال بخادم CyberShield.',
+      );
     }
   }
 
-  Map<String, dynamic> _decodeResponse(http.Response response) {
-    dynamic decoded;
+  Future<http.Response> _post(String path, Map<String, dynamic> body) async {
     try {
-      decoded = jsonDecode(utf8.decode(response.bodyBytes));
+      return await _client
+          .post(_uri(path), headers: _headers, body: jsonEncode(body))
+          .timeout(_timeout);
+    } on TimeoutException {
+      throw const ApiException(
+        code: 'REQUEST_TIMEOUT',
+        message: 'انتهت مهلة الفحص. حاول مرة أخرى.',
+      );
+    } on http.ClientException {
+      throw const ApiException(
+        code: 'CONNECTION_FAILED',
+        message: 'تعذر الاتصال بخادم CyberShield.',
+      );
+    }
+  }
+
+  Uri _uri(String path) {
+    return Uri.parse('$_baseUrl$path');
+  }
+
+  Map<String, String> get _headers => const {
+    'Accept': 'application/json',
+    'Content-Type': 'application/json',
+  };
+
+  Map<String, dynamic> _decodeObject(String body) {
+    try {
+      final decoded = jsonDecode(body);
+
+      if (decoded is Map) {
+        return Map<String, dynamic>.from(decoded);
+      }
     } on FormatException {
-      throw const ApiException('INVALID_RESPONSE', 'استجابة الخادم ليست JSON صالحاً.');
+      // سيتم التعامل مع الاستجابة غير الصالحة أدناه.
     }
-    if (decoded is! Map) {
-      throw const ApiException('INVALID_RESPONSE', 'استجابة الخادم ليست كائناً JSON صالحاً.');
-    }
-    Map<String, dynamic> json;
+
+    throw const ApiException(
+      code: 'INVALID_RESPONSE',
+      message: 'استجابة الخادم غير صالحة.',
+    );
+  }
+
+  ApiException _readApiError(http.Response response) {
     try {
-      json = Map<String, dynamic>.from(decoded);
-    } on TypeError {
-      throw const ApiException('INVALID_RESPONSE', 'استجابة الخادم تحتوي مفاتيح غير صالحة.');
+      final data = _decodeObject(response.body);
+      final error = data['error'];
+
+      if (error is Map) {
+        return ApiException(
+          code: error['code']?.toString() ?? 'HTTP_ERROR',
+          message: error['message']?.toString() ?? 'تعذر تنفيذ الطلب.',
+          statusCode: response.statusCode,
+        );
+      }
+    } on ApiException {
+      // الاستجابة لا تحتوي على رسالة خطأ بالتنسيق المتوقع.
     }
-    if (response.statusCode >= 200 && response.statusCode < 300) return json;
-    final error = json['error'];
-    final errorMap = error is Map ? error : const {};
-    final code = errorMap['code'] is String ? errorMap['code'] as String : 'HTTP_ERROR';
-    // Stable user-facing messages; don't expose arbitrary remote error details.
-    final message = switch (code) {
-      'AUTHORIZATION_REQUIRED' => 'يجب تأكيد التصريح قبل إجراء الفحص.',
-      'TARGET_NOT_ALLOWED' => 'رابط الموقع غير مسموح بفحصه وفق سياسة الخادم.',
-      'INVALID_REQUEST' => 'طلب الفحص غير صالح. راجعي الرابط.',
-      'RATE_LIMIT_EXCEEDED' => 'تم تجاوز عدد الطلبات المسموح. حاولي لاحقاً.',
-      'SCAN_CAPACITY_EXCEEDED' => 'الخادم مشغول حالياً. حاولي لاحقاً.',
-      'SCAN_TIMEOUT' => 'انتهت مهلة الفحص على الخادم.',
-      _ => switch (response.statusCode) {
-          400 => 'الطلب غير صالح.',
-          403 => 'تم رفض طلب الفحص.',
-          429 => 'تم تجاوز عدد الطلبات المسموح.',
-          503 => 'خدمة الفحص غير متاحة حالياً.',
-          504 => 'انتهت مهلة الخادم.',
-          _ => 'تعذر تنفيذ الطلب (HTTP ${response.statusCode}).',
-        },
-    };
-    throw ApiException(code, message, response.statusCode);
+
+    final fallbackMessage = response.statusCode == 504
+        ? 'انتهت المهلة الزمنية المسموحة للفحص.'
+        : response.statusCode == 429
+        ? 'تم تجاوز الحد المسموح للطلبات. حاول لاحقًا.'
+        : 'تعذر تنفيذ الطلب. رمز الاستجابة: ${response.statusCode}';
+    return ApiException(
+      code: response.statusCode == 504 ? 'SCAN_TIMEOUT' : 'HTTP_ERROR',
+      message: fallbackMessage,
+      statusCode: response.statusCode,
+    );
   }
 
   void dispose() {
-    if (_ownsClient) _client.close();
+    if (_ownsClient) {
+      _client.close();
+    }
   }
+}
+
+class ApiException implements Exception {
+  final String code;
+  final String message;
+  final int? statusCode;
+
+  const ApiException({
+    required this.code,
+    required this.message,
+    this.statusCode,
+  });
+
+  @override
+  String toString() => message;
 }

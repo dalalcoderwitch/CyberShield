@@ -1,16 +1,6 @@
-class Finding {
-  const Finding({
-    required this.checkId,
-    required this.title,
-    required this.status,
-    required this.severity,
-    required this.confidence,
-    required this.evidence,
-    required this.explanation,
-    required this.recommendation,
-    required this.limitations,
-  });
+import '../utils/cookie_privacy.dart';
 
+class Finding {
   final String checkId;
   final String title;
   final String status;
@@ -20,61 +10,100 @@ class Finding {
   final String explanation;
   final String recommendation;
   final List<String> limitations;
+  final String impact;
+  final String remediation;
+  final List<String> relations;
+  final String priority;
 
-  static const allowedStatuses = {
-    'passed', 'warning', 'not_verified', 'error', 'skipped',
-  };
+  const Finding({
+    required this.checkId,
+    required this.title,
+    required this.status,
+    required this.severity,
+    required this.confidence,
+    this.evidence,
+    required this.explanation,
+    required this.recommendation,
+    this.limitations = const [],
+    this.impact = '',
+    this.remediation = '',
+    this.relations = const [],
+    this.priority = '',
+  });
 
   factory Finding.fromJson(Map<String, dynamic> json) {
-    String requiredText(String key) {
-      final value = json[key];
-      if (value is! String || value.trim().isEmpty) {
-        throw FormatException('Invalid finding field: $key');
-      }
-      return value;
+    final checkId = _readString(json['check_id']);
+    final isCookieFinding = checkId.toLowerCase().startsWith('cookie_');
+
+    String readText(Object? value) {
+      final text = _readString(value);
+      return isCookieFinding ? CookiePrivacy.redactText(text) : text;
     }
 
-    String optionalText(String key) {
-      final value = json[key];
-      if (value == null) return '';
-      if (value is! String) throw FormatException('Invalid finding field: $key');
-      return value;
+    List<String> readList(Object? value) {
+      final items = _readStringList(value);
+      return isCookieFinding
+          ? items.map(CookiePrivacy.redactText).toList()
+          : items;
     }
 
-    final status = requiredText('status');
-    if (!allowedStatuses.contains(status)) {
-      throw FormatException('Unknown finding status: $status');
-    }
     return Finding(
-      checkId: requiredText('check_id'),
-      title: requiredText('title'),
-      status: status,
-      severity: requiredText('severity'),
-      confidence: requiredText('confidence'),
-      evidence: json['evidence'],
-      explanation: optionalText('explanation'),
-      recommendation: optionalText('recommendation'),
-      limitations: readStringList(json['limitations'], 'limitations'),
+      checkId: checkId,
+      title: readText(json['title']),
+      status: _readString(json['status']),
+      severity: _readString(json['severity']),
+      confidence: _readString(json['confidence']),
+      evidence: isCookieFinding
+          ? CookiePrivacy.redactEvidence(json['evidence'])
+          : json['evidence'],
+      explanation: readText(json['explanation']),
+      recommendation: readText(json['recommendation']),
+      limitations: readList(json['limitations']),
+      impact: readText(json['impact']),
+      remediation: readText(json['remediation']),
+      relations: readList(json['relations']),
+      priority: readText(json['priority']),
     );
   }
 
-  Map<String, dynamic> toJson() => {
-        'check_id': checkId,
-        'title': title,
-        'status': status,
-        'severity': severity,
-        'confidence': confidence,
-        'evidence': evidence,
-        'explanation': explanation,
-        'recommendation': recommendation,
-        'limitations': limitations,
-      };
+  Map<String, dynamic> toJson() {
+    final json = <String, dynamic>{
+      'check_id': checkId,
+      'title': title,
+      'status': status,
+      'severity': severity,
+      'confidence': confidence,
+      'evidence': evidence,
+      'explanation': explanation,
+      'recommendation': recommendation,
+      'limitations': limitations,
+    };
+    if (impact.isNotEmpty) json['impact'] = impact;
+    if (remediation.isNotEmpty) json['remediation'] = remediation;
+    if (relations.isNotEmpty) json['relations'] = relations;
+    if (priority.isNotEmpty) json['priority'] = priority;
+    return json;
+  }
 
-  static List<String> readStringList(Object? value, String field) {
-    if (value == null) return const [];
-    if (value is! List || value.any((element) => element is! String)) {
-      throw FormatException('Invalid string list: $field');
+  static String _readString(Object? value) {
+    if (value == null) return '';
+    return value.toString();
+  }
+
+  static List<String> _readStringList(Object? value) {
+    if (value == null) return [];
+
+    if (value is List) {
+      return value
+          .map((item) => _readString(item))
+          .where((item) => item.isNotEmpty)
+          .toList();
     }
-    return List<String>.unmodifiable(value.cast<String>());
+
+    if (value is String && value.trim().isNotEmpty) {
+      return [value.trim()];
+    }
+
+    return [];
   }
 }
