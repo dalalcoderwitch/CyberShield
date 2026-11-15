@@ -284,6 +284,65 @@ def test_scan_endpoint_returns_contract_compatible_report(monkeypatch):
     assert report["limitations"]
     assert report["target_url"] == "https://example.com"
 
+
+def test_scan_endpoint_preserves_not_verified_findings_on_connection_failure(
+    monkeypatch,
+):
+    """The API must preserve unverified findings when the connection fails."""
+
+    app = api_module.create_app()
+    client = app.test_client()
+
+    monkeypatch.setattr(
+        api_module,
+        "resolve_target",
+        lambda url, deadline=None: object(),
+    )
+
+    monkeypatch.setattr(
+        "security_scanner.report._safe_get_response",
+        lambda url, resolved_target=None, deadline=None: (
+            None,
+            {},
+            "connection",
+        ),
+    )
+
+    response = client.post(
+        "/api/v1/scan",
+        json={
+            "target_url": "https://example.com",
+            "authorization_confirmed": True,
+        },
+    )
+
+    assert response.status_code == 200
+
+    report = response.get_json()
+
+    assert report["status"] == "completed"
+    assert report["http_status"] is None
+    assert report["summary"]["total"] == 5
+    assert report["summary"]["error"] == 1
+    assert report["summary"]["not_verified"] == 4
+    assert report["summary"]["passed"] == 0
+
+    findings = {
+        finding["check_id"]: finding
+        for finding in report["findings"]
+    }
+
+    assert findings["https_connection"]["status"] == "error"
+
+    for check_id in (
+        "header_hsts",
+        "header_csp",
+        "header_x_content_type_options",
+        "header_x_frame_options",
+    ):
+        assert findings[check_id]["status"] == "not_verified"
+
+
 def test_scan_returns_report(monkeypatch):
     app = api_module.create_app()
     client = app.test_client()
@@ -292,16 +351,22 @@ def test_scan_returns_report(monkeypatch):
 
     expected_report = {
         "target_url": "https://example.com",
-        "http_status": 200,
+        "http_status": None,
         "summary": {
-            "total": 5,
-            "passed": 5,
+            "total": 1,
+            "passed": 0,
             "warning": 0,
-            "not_verified": 0,
+            "not_verified": 1,
             "error": 0,
             "skipped": 0,
         },
-        "findings": [],
+        "findings": [
+            {
+                "check_id": "header_hsts",
+                "status": "not_verified",
+                "evidence": "Connection could not be established.",
+            }
+        ],
         "limitations": [],
     }
 
@@ -330,6 +395,9 @@ def test_scan_returns_report(monkeypatch):
 
     assert response.status_code == 200
     assert response.json == expected_report
+    assert response.json["findings"][0]["status"] == "not_verified"
+    assert response.json["summary"]["not_verified"] == 1
+    assert response.json["summary"]["total"] == 1
     assert captured["url"] == "https://example.com"
     assert captured["resolved_target"] is resolved
 
@@ -829,3 +897,687 @@ def test_scan_returns_504_when_deadline_expires_after_valid_resolution(
     assert response.status_code == 504
     assert response.get_json()["error"]["code"] == "SCAN_TIMEOUT"
     assert scan_calls == []
+
+def test_scan_rejects_non_json_content_type():
+    app = api_module.create_app()
+    client = app.test_client()
+
+    response = client.post(
+        "/api/v1/scan",
+        data='{"target_url":"https://example.com","authorization_confirmed":true}',
+        content_type="text/plain",
+    )
+
+    assert response.status_code == 400
+    assert response.json["error"]["code"] == "INVALID_REQUEST"
+
+def test_scan_rate_limit_ignores_untrusted_forwarded_for(monkeypatch):
+    """Untrusted X-Forwarded-For must not bypass the source rate limit."""
+
+    app = api_module.create_app()
+    client = app.test_client()
+    scan_calls = []
+
+    monkeypatch.setattr(
+        api_module,
+        "resolve_target",
+        lambda url, deadline=None: object(),
+    )
+
+    def fake_scan(url, resolved_target=None, deadline=None):
+        scan_calls.append(url)
+        return {"status": "completed"}
+
+    monkeypatch.setattr(api_module, "scan_target", fake_scan)
+
+    payload = {
+        "target_url": "https://example.com",
+        "authorization_confirmed": True,
+    }
+    source = "198.51.100.30"
+
+    for index in range(5):
+        response = client.post(
+            "/api/v1/scan",
+            json=payload,
+            environ_overrides={"REMOTE_ADDR": source},
+            headers={"X-Forwarded-For": f"203.0.113.{index + 1}"},
+        )
+        assert response.status_code == 200
+
+    response = client.post(
+        "/api/v1/scan",
+        json=payload,
+        environ_overrides={"REMOTE_ADDR": source},
+        headers={"X-Forwarded-For": "203.0.113.99"},
+    )
+
+    assert response.status_code == 429
+    assert response.json["error"]["code"] == "RATE_LIMIT_EXCEEDED"
+    assert len(scan_calls) == 5
+
+def test_scan_requires_authorization_before_target_resolution(monkeypatch):
+    """Reject unconfirmed scans before DNS resolution or scanner execution."""
+
+    app = api_module.create_app()
+    client = app.test_client()
+    calls = {"resolve": 0, "scan": 0}
+
+    def fake_resolve(url, deadline=None):
+        calls["resolve"] += 1
+        return object()
+
+    def fake_scan(url, resolved_target=None, deadline=None):
+        calls["scan"] += 1
+        return {"status": "completed"}
+
+    monkeypatch.setattr(api_module, "resolve_target", fake_resolve)
+    monkeypatch.setattr(api_module, "scan_target", fake_scan)
+
+    response = client.post(
+        "/api/v1/scan",
+        json={
+            "target_url": "https://example.com",
+            "authorization_confirmed": False,
+        },
+    )
+
+    assert response.status_code == 403
+    assert response.json["error"]["code"] == "AUTHORIZATION_REQUIRED"
+    assert calls == {"resolve": 0, "scan": 0}
+
+def test_scan_rate_limit_reclaims_expired_source_slots(monkeypatch):
+    """Expired source records must not block new sources."""
+
+    app = api_module.create_app()
+    client = app.test_client()
+    clock = {"now": 1000.0}
+
+    monkeypatch.setattr(
+        api_module,
+        "time",
+        SimpleNamespace(monotonic=lambda: clock["now"]),
+    )
+    monkeypatch.setattr(
+        api_module,
+        "_SCAN_RATE_LIMIT_MAX_SOURCES",
+        1,
+    )
+    monkeypatch.setattr(
+        api_module,
+        "resolve_target",
+        lambda url, deadline=None: object(),
+    )
+    monkeypatch.setattr(
+        api_module,
+        "scan_target",
+        lambda url, resolved_target=None, deadline=None: {
+            "status": "completed"
+        },
+    )
+
+    payload = {
+        "target_url": "https://example.com",
+        "authorization_confirmed": True,
+    }
+
+    first = client.post(
+        "/api/v1/scan",
+        json=payload,
+        environ_overrides={"REMOTE_ADDR": "198.51.100.30"},
+    )
+    assert first.status_code == 200
+
+    clock["now"] = 1061.0
+
+    second = client.post(
+        "/api/v1/scan",
+        json=payload,
+        environ_overrides={"REMOTE_ADDR": "198.51.100.31"},
+    )
+
+    assert second.status_code == 200
+
+def test_scan_accepts_url_at_maximum_length(monkeypatch):
+    """Accept a URL whose length is exactly the configured maximum."""
+
+    app = api_module.create_app()
+    client = app.test_client()
+
+    target_url = "https://example.com/" + (
+        "a" * (2048 - len("https://example.com/"))
+    )
+
+    monkeypatch.setattr(
+        api_module,
+        "resolve_target",
+        lambda url, deadline=None: object(),
+    )
+    monkeypatch.setattr(
+        api_module,
+        "scan_target",
+        lambda url, resolved_target=None, deadline=None: {
+            "status": "completed"
+        },
+    )
+
+    assert len(target_url) == 2048
+
+    response = client.post(
+        "/api/v1/scan",
+        json={
+            "target_url": target_url,
+            "authorization_confirmed": True,
+        },
+    )
+
+    assert response.status_code == 200
+
+def test_scan_capacity_is_released_after_resolution_exception(
+    monkeypatch,
+):
+    app = api_module.create_app()
+    client = app.test_client()
+
+    resolution_calls = []
+
+    def fake_resolve(url, deadline=None):
+        resolution_calls.append(url)
+
+        if len(resolution_calls) == 1:
+            raise RuntimeError("Simulated resolution failure")
+
+        return object()
+
+    monkeypatch.setattr(
+        api_module,
+        "resolve_target",
+        fake_resolve,
+    )
+
+    monkeypatch.setattr(
+        api_module,
+        "scan_target",
+        lambda url, resolved_target=None, deadline=None: {
+            "status": "completed"
+        },
+    )
+
+    payload = {
+        "target_url": "https://example.com",
+        "authorization_confirmed": True,
+    }
+
+    first = client.post("/api/v1/scan", json=payload)
+    assert first.status_code == 500
+    assert first.json["error"]["code"] == "INTERNAL_ERROR"
+
+    second = client.post("/api/v1/scan", json=payload)
+    assert second.status_code == 200
+
+    assert len(resolution_calls) == 2
+
+def test_scan_rejects_empty_json_body(monkeypatch):
+    app = api_module.create_app()
+    client = app.test_client()
+
+    def fail_if_called(*args, **kwargs):
+        pytest.fail("Target resolution or scanning must not run")
+
+    monkeypatch.setattr(api_module, "resolve_target", fail_if_called)
+    monkeypatch.setattr(api_module, "scan_target", fail_if_called)
+
+    response = client.post(
+        "/api/v1/scan",
+        data="",
+        content_type="application/json",
+    )
+
+    assert response.status_code == 400
+    assert response.json["error"]["code"] == "INVALID_REQUEST"
+
+def test_scan_rejects_numeric_authorization_value(monkeypatch):
+    app = api_module.create_app()
+    client = app.test_client()
+
+    def fail_if_called(*args, **kwargs):
+        pytest.fail("Target resolution or scanning must not run")
+
+    monkeypatch.setattr(api_module, "resolve_target", fail_if_called)
+    monkeypatch.setattr(api_module, "scan_target", fail_if_called)
+
+    response = client.post(
+        "/api/v1/scan",
+        json={
+            "target_url": "https://example.com",
+            "authorization_confirmed": 1,
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json["error"]["code"] == "INVALID_REQUEST"
+
+def test_scan_releases_capacity_after_resolution_timeout(monkeypatch):
+    app = api_module.create_app()
+    client = app.test_client()
+
+    clock = iter((99.0, 100.0, 126.0, 127.0, 128.0, 129.0, 130.0))
+    monkeypatch.setattr(
+        api_module,
+        "time",
+        SimpleNamespace(monotonic=lambda: next(clock)),
+    )
+    monkeypatch.setattr(
+        api_module,
+        "_SCAN_SLOTS",
+        BoundedSemaphore(1),
+    )
+
+    resolved_target = (
+        "parsed",
+        "example.com",
+        ["93.184.216.34"],
+    )
+
+    resolution_calls = []
+
+    def fake_resolve(url, deadline=None):
+        resolution_calls.append(url)
+        return resolved_target
+
+    monkeypatch.setattr(api_module, "resolve_target", fake_resolve)
+
+    scan_calls = []
+
+    def fake_scan(*args, **kwargs):
+        scan_calls.append((args, kwargs))
+        return {}
+
+    monkeypatch.setattr(api_module, "scan_target", fake_scan)
+
+    payload = {
+        "target_url": "https://example.com",
+        "authorization_confirmed": True,
+    }
+    request_options = {"environ_overrides": {"REMOTE_ADDR": "198.51.100.77"}}
+
+    first = client.post(
+        "/api/v1/scan",
+        json=payload,
+        **request_options,
+    )
+    assert first.status_code == 504
+    assert first.json["error"]["code"] == "SCAN_TIMEOUT"
+
+    second = client.post(
+        "/api/v1/scan",
+        json=payload,
+        **request_options,
+    )
+    assert second.status_code == 200
+
+    assert len(resolution_calls) == 2
+    assert len(scan_calls) == 1
+
+def test_scan_releases_capacity_after_scan_timeout(monkeypatch):
+    app = api_module.create_app()
+    client = app.test_client()
+
+    clock = iter((99.0, 100.0, 101.0, 126.0, 127.0, 128.0, 129.0, 130.0))
+    monkeypatch.setattr(
+        api_module,
+        "time",
+        SimpleNamespace(monotonic=lambda: next(clock)),
+    )
+    monkeypatch.setattr(
+        api_module,
+        "_SCAN_SLOTS",
+        BoundedSemaphore(1),
+    )
+
+    resolved_target = (
+        "parsed",
+        "example.com",
+        ["93.184.216.34"],
+    )
+
+    resolution_calls = []
+
+    def fake_resolve(url, deadline=None):
+        resolution_calls.append(url)
+        return resolved_target
+
+    monkeypatch.setattr(api_module, "resolve_target", fake_resolve)
+
+    scan_calls = []
+
+    def fake_scan(url, resolved_target=None, deadline=None):
+        scan_calls.append((url, resolved_target, deadline))
+        return {"status": "completed"}
+
+    monkeypatch.setattr(api_module, "scan_target", fake_scan)
+
+    payload = {
+        "target_url": "https://example.com",
+        "authorization_confirmed": True,
+    }
+    request_options = {"environ_overrides": {"REMOTE_ADDR": "198.51.100.78"}}
+
+    first = client.post(
+        "/api/v1/scan",
+        json=payload,
+        **request_options,
+    )
+    assert first.status_code == 504
+    assert first.json["error"]["code"] == "SCAN_TIMEOUT"
+    assert len(scan_calls) == 1
+
+    second = client.post(
+        "/api/v1/scan",
+        json=payload,
+        **request_options,
+    )
+    assert second.status_code == 200
+
+    assert len(resolution_calls) == 2
+    assert len(scan_calls) == 2
+def test_scan_does_not_start_scanner_for_disallowed_target(monkeypatch):
+    app = api_module.create_app()
+    client = app.test_client()
+
+    scan_calls = []
+
+    monkeypatch.setattr(
+        api_module,
+        "resolve_target",
+        lambda url, deadline=None: None,
+    )
+
+    def fake_scan(*args, **kwargs):
+        scan_calls.append((args, kwargs))
+        return {"status": "completed"}
+
+    monkeypatch.setattr(api_module, "scan_target", fake_scan)
+
+    response = client.post(
+        "/api/v1/scan",
+        json={
+            "target_url": "https://example.com",
+            "authorization_confirmed": True,
+        },
+    )
+
+    assert response.status_code == 403
+    assert response.json["error"]["code"] == "TARGET_NOT_ALLOWED"
+    assert scan_calls == []
+def test_scan_releases_capacity_after_report_serialization_error(monkeypatch):
+    app = api_module.create_app()
+    client = app.test_client()
+
+    monkeypatch.setattr(
+        api_module,
+        "_SCAN_SLOTS",
+        BoundedSemaphore(1),
+    )
+    monkeypatch.setattr(
+        api_module,
+        "resolve_target",
+        lambda url, deadline=None: object(),
+    )
+
+    scan_calls = []
+
+    def fake_scan(url, resolved_target=None, deadline=None):
+        scan_calls.append(url)
+
+        if len(scan_calls) == 1:
+            return {"invalid": object()}
+
+        return {"status": "completed"}
+
+    monkeypatch.setattr(api_module, "scan_target", fake_scan)
+
+    payload = {
+        "target_url": "https://example.com",
+        "authorization_confirmed": True,
+    }
+
+    first = client.post("/api/v1/scan", json=payload)
+    assert first.status_code == 500
+    assert first.json["error"]["code"] == "INTERNAL_ERROR"
+
+    second = client.post("/api/v1/scan", json=payload)
+    assert second.status_code == 200
+
+    assert len(scan_calls) == 2
+def test_health_rejects_unsupported_method_with_json():
+    app = api_module.create_app()
+    client = app.test_client()
+
+    response = client.post("/api/v1/health")
+
+    assert response.status_code == 405
+    assert "GET" in response.headers.get("Allow", "")
+    assert response.json["error"]["code"] == "METHOD_NOT_ALLOWED"
+    assert response.json["error"]["message"]
+def test_scan_rate_limit_expires_at_exactly_sixty_seconds(monkeypatch):
+    app = api_module.create_app()
+    client = app.test_client()
+
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(
+        api_module,
+        "time",
+        SimpleNamespace(monotonic=lambda: clock["now"]),
+    )
+    monkeypatch.setattr(
+        api_module,
+        "resolve_target",
+        lambda url, deadline=None: object(),
+    )
+    monkeypatch.setattr(
+        api_module,
+        "scan_target",
+        lambda url, resolved_target=None, deadline=None: {
+            "status": "completed"
+        },
+    )
+
+    payload = {
+        "target_url": "https://example.com",
+        "authorization_confirmed": True,
+    }
+
+    for _ in range(5):
+        response = client.post("/api/v1/scan", json=payload)
+        assert response.status_code == 200
+
+    response = client.post("/api/v1/scan", json=payload)
+    assert response.status_code == 429
+
+    clock["now"] = 1060.0
+    response = client.post("/api/v1/scan", json=payload)
+    assert response.status_code == 200
+
+
+def test_scan_options_does_not_start_scan(monkeypatch):
+    app = api_module.create_app()
+    client = app.test_client()
+
+    calls = []
+
+    def unexpected_call(*args, **kwargs):
+        calls.append((args, kwargs))
+        raise AssertionError("OPTIONS must not start a scan")
+
+    monkeypatch.setattr(api_module, "resolve_target", unexpected_call)
+    monkeypatch.setattr(api_module, "scan_target", unexpected_call)
+
+    response = client.options("/api/v1/scan")
+
+    assert response.status_code == 200
+    assert "POST" in response.headers.get("Allow", "")
+    assert "OPTIONS" in response.headers.get("Allow", "")
+    assert calls == []
+
+def test_scan_cors_allows_localhost_preflight(monkeypatch):
+    app = api_module.create_app()
+    client = app.test_client()
+
+    calls = []
+
+    def unexpected_call(*args, **kwargs):
+        calls.append((args, kwargs))
+        raise AssertionError("CORS preflight must not start a scan")
+
+    monkeypatch.setattr(api_module, "resolve_target", unexpected_call)
+    monkeypatch.setattr(api_module, "scan_target", unexpected_call)
+
+    origin = "http://localhost:5173"
+
+    response = client.options(
+        "/api/v1/scan",
+        headers={
+            "Origin": origin,
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "Content-Type",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers.get("Access-Control-Allow-Origin") == origin
+    assert "POST" in response.headers.get("Access-Control-Allow-Methods", "")
+    assert "content-type" in response.headers.get(
+        "Access-Control-Allow-Headers", ""
+    ).lower()
+    assert calls == []
+
+
+def test_scan_cors_allows_localhost_post(monkeypatch):
+    app = api_module.create_app()
+    client = app.test_client()
+
+    expected_report = {
+        "status": "completed",
+        "target_url": "https://example.com",
+        "summary": {"total": 0},
+        "findings": [],
+    }
+
+    monkeypatch.setattr(
+        api_module,
+        "resolve_target",
+        lambda url, deadline=None: object(),
+    )
+    monkeypatch.setattr(
+        api_module,
+        "scan_target",
+        lambda url, resolved_target=None, deadline=None: expected_report,
+    )
+
+    origin = "http://localhost:5173"
+
+    response = client.post(
+        "/api/v1/scan",
+        json={
+            "target_url": "https://example.com",
+            "authorization_confirmed": True,
+        },
+        headers={"Origin": origin},
+    )
+
+    assert response.status_code == 200
+    assert response.headers.get("Access-Control-Allow-Origin") == origin
+    assert response.json == expected_report
+
+def test_scan_cors_rejects_unallowed_origin():
+    app = api_module.create_app()
+    client = app.test_client()
+
+    response = client.options(
+        "/api/v1/scan",
+        headers={
+            "Origin": "https://untrusted.example",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "Content-Type",
+        },
+    )
+
+    assert response.status_code == 200
+    assert "Access-Control-Allow-Origin" not in response.headers
+
+
+def test_unhandled_internal_server_error_returns_safe_json():
+    from flask import abort
+
+    app = api_module.create_app()
+
+    @app.get("/_test/internal-error")
+    def trigger_internal_error():
+        abort(500, description="private internal details")
+
+    client = app.test_client()
+    response = client.get("/_test/internal-error")
+
+    assert response.status_code == 500
+    assert response.is_json
+    assert response.json["error"]["code"] == "INTERNAL_ERROR"
+    assert response.json["error"]["message"]
+    assert "private internal details" not in response.get_data(
+        as_text=True
+    )
+
+
+def test_scan_can_request_expanded_checks(monkeypatch):
+    """تمرير خيار الفحوص الموسعة صراحةً من API إلى المحرك."""
+    app = api_module.create_app()
+    client = app.test_client()
+    resolved = object()
+    captured = {}
+
+    monkeypatch.setattr(
+        api_module,
+        "resolve_target",
+        lambda url, deadline=None: resolved,
+    )
+
+    def fake_scan(url, resolved_target=None, deadline=None,
+                  include_expanded_checks=False):
+        captured["include_expanded_checks"] = include_expanded_checks
+        captured["resolved_target"] = resolved_target
+        return {"status": "completed", "findings": [{}] * 24}
+
+    monkeypatch.setattr(api_module, "scan_target", fake_scan)
+
+    response = client.post(
+        "/api/v1/scan",
+        json={
+            "target_url": "https://example.com",
+            "authorization_confirmed": True,
+            "include_expanded_checks": True,
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured["include_expanded_checks"] is True
+    assert captured["resolved_target"] is resolved
+    assert len(response.json["findings"]) == 24
+
+
+
+def test_scan_rejects_non_boolean_expanded_option():
+    """رفض قيمة include_expanded_checks إذا لم تكن Boolean."""
+    app = api_module.create_app()
+    client = app.test_client()
+
+    response = client.post(
+        "/api/v1/scan",
+        json={
+            "target_url": "https://example.com",
+            "authorization_confirmed": True,
+            "include_expanded_checks": "true",
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json["error"]["code"] == "INVALID_REQUEST"

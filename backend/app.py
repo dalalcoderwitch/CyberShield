@@ -2,6 +2,7 @@ import time
 from threading import BoundedSemaphore, Lock
 
 from flask import Flask, jsonify, request
+from flask_cors import CORS
 
 from backend.scanner import scan_target
 from security_scanner.scanner import resolve_target
@@ -23,6 +24,17 @@ def create_app():
 
     app = Flask(__name__)
     app.config["MAX_CONTENT_LENGTH"] = 16 * 1024
+
+    CORS(
+        app,
+        resources={
+            r"/api/v1/*": {
+                "origins": r"^http://(localhost|127\.0\.0\.1)(:\d+)?$",
+                "methods": ["GET", "POST", "OPTIONS"],
+                "allow_headers": ["Content-Type"],
+            }
+        },
+    )
 
     # تحديد معدل الطلبات داخل عملية Python الحالية.
     # هذا الحد ليس مشتركًا بين عدة عمليات أو خوادم.
@@ -103,6 +115,9 @@ def create_app():
         authorization_confirmed = data.get(
             "authorization_confirmed"
         )
+        include_expanded_checks = data.get(
+            "include_expanded_checks", False
+        )
 
         if (
             not isinstance(target_url, str)
@@ -110,6 +125,7 @@ def create_app():
             or target_url != target_url.strip()
             or len(target_url) > 2048
             or not isinstance(authorization_confirmed, bool)
+            or not isinstance(include_expanded_checks, bool)
         ):
             return jsonify({
                 "error": {
@@ -180,11 +196,14 @@ def create_app():
                 }), 403
 
             # تمرير نتيجة التحقق نفسها والمهلة المتبقية إلى المحرك.
-            report = scan_target(
-                target_url,
-                resolved_target=resolved_target,
-                deadline=deadline,
-            )
+            scan_options = {
+                "resolved_target": resolved_target,
+                "deadline": deadline,
+            }
+            if include_expanded_checks:
+                scan_options["include_expanded_checks"] = True
+
+            report = scan_target(target_url, **scan_options)
 
             if time.monotonic() >= deadline:
                 return scan_timeout_response()
