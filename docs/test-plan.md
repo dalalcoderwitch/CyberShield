@@ -218,21 +218,24 @@ List collected tests without executing them using:
 .\.venv\Scripts\python.exe -m pytest --collect-only -q
 
 The full suite was executed through GitHub Actions on 2026-11-16
-at current `main` commit `b202cc617a06b983264f6cd1fadb4a739d342afc`.
-GitHub Actions run [#16](https://github.com/dalalcoderwitch/CyberShield/actions/runs/43869278518)
-completed successfully with `1001 passed in 3.21s`. This run includes
-the Flask-to-report-engine correlation integration regression and the
-seven-rule correlation JSON schema/serialization regression. External
-HTTP response and DNS evaluations remain fixture-isolated; this is not a
-live-network end-to-end security test. This is an executed result from the
-current branch head, not a test-collection estimate. Re-run the workflow
-after subsequent code changes and update this record with the newest run.
+at current `main` commit `4b7e355e3624b03fdc0ce741cf0f7fa6918dea30`.
+GitHub Actions run [#22](https://github.com/dalalcoderwitch/CyberShield/actions/runs/43872850863)
+completed successfully with `1004 passed in 3.39s`. This run includes
+the Flask-to-report-engine correlation integration regression, the
+seven-rule correlation JSON schema/serialization regression, and exact
+request-body boundary tests proving that a body of exactly 16 KiB is
+accepted by Flask's size gate while a body one byte larger is rejected
+with HTTP 413 before DNS resolution. External HTTP response and DNS
+evaluations remain fixture-isolated; this is not a live-network
+end-to-end security test. This is an executed result from the current
+branch head, not a test-collection estimate. Re-run the workflow after
+subsequent code changes and update this record with the newest run.
 
 A test collection count alone does not indicate that the tests passed. Record the actual execution result separately.
 
 ## 10. Current Acceptance Criteria
 
-- The latest recorded implementation run completed with 997 passed in 3.14 seconds on current `main` commit `bd7011f6b1480e3dd1763c37bd0000607baacd74` (GitHub Actions run [#6](https://github.com/dalalcoderwitch/CyberShield/actions/runs/43864268227)); later code changes require a new successful run.
+- The latest recorded implementation run completed with 1004 passed in 3.39 seconds on current `main` commit `4b7e355e3624b03fdc0ce741cf0f7fa6918dea30` (GitHub Actions run [#22](https://github.com/dalalcoderwitch/CyberShield/actions/runs/43872850863)); later code changes require a new successful run.
 - The test count must be updated whenever tests are added or removed.
 - All current automated tests pass.
 - The test plan distinguishes mocked behavior from real network verification.
