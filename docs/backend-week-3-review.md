@@ -1,7 +1,8 @@
 # CyberShield — Backend Week 3 Day 1 Review
 
 **Owner:** Bilsan — Flask API / Backend integration  
-**Date:** 2026-11-17  
+**Preparation date:** 2026-11-16  
+**Scheduled Day 1:** Tuesday, 2026-11-17  
 **Branch:** `main`  
 **Baseline:** Week 2 close at `a422033e9b7966d16eb7a47c21893ddaefd7c75c`
 
