@@ -525,13 +525,14 @@ Sydvx0FeNWmqPBhmlaj0SqH0
         assert findings["header_csp"]["status"] == "warning"
         assert "جودة السياسة" in findings["header_csp"]["explanation"]
 
-        assert dns_lookups.count(("localhost", 443)) == 2
-        assert requested_socket_addresses == [("127.0.0.1", 443), ("127.0.0.1", 443), ("127.0.0.1", 443)]
+        assert dns_lookups.count(("localhost", 443)) == 1
+        assert requested_socket_addresses == [("127.0.0.1", 443)]
         assert connected_peers == [("127.0.0.1", server.server_port)]
         assert received_sni == ["localhost"]
-        assert tls_metadata and all(item["version"].startswith("TLSv") for item in tls_metadata[:1])
+        assert len(tls_metadata) == 1
+        assert tls_metadata[0]["version"].startswith("TLSv")
         assert tls_metadata[0]["cipher"]
-        assert requests_seen == ["/", "/slow"]
+        assert requests_seen == ["/"]
 
         assert len(body_samples) == 1
         sample, complete, limit = body_samples[0]
@@ -579,7 +580,19 @@ Sydvx0FeNWmqPBhmlaj0SqH0
         assert mismatch_findings["https_connection"]["status"] == "warning"
         assert mismatch_findings["header_hsts"]["status"] == "not_verified"
         assert received_sni == ["localhost", "localhost", "wrong.example"]
+        assert dns_lookups.count(("localhost", 443)) == 2
         assert dns_lookups.count(("wrong.example", 443)) == 1
+        assert requested_socket_addresses == [
+            ("127.0.0.1", 443),
+            ("127.0.0.1", 443),
+            ("127.0.0.1", 443),
+        ]
+        assert connected_peers == [
+            ("127.0.0.1", server.server_port),
+            ("127.0.0.1", server.server_port),
+            ("127.0.0.1", server.server_port),
+        ]
+        assert len(tls_metadata) == 2
         assert requests_seen == ["/", "/slow"]
     finally:
         server.shutdown()
