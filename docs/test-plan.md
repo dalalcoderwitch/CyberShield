@@ -233,40 +233,43 @@ The following operational and deployment cases remain outside the proof provided
 
 These are deployment or broader security-validation items; they must not be represented as established merely because the automated suite passes.
 
-### 8.1 Flutter client integration status — reviewed 2026-11-16
+### 8.1 Flutter integration review and Week 1 scope boundary — 2026-11-16
 
-The current Flutter client sends `include_expanded_checks: true` in
-`mobile/lib/services/scan_api_service.dart`, and
-`mobile/test/services/scan_api_service_test.dart` asserts that request flag.
-The current client does not yet complete the expanded correlation contract:
+The current Flutter client is wired to the basic Flask scan contract:
 
-- `mobile/lib/models/scan_report.dart` does not model or retain the top-level
-  `correlations` array or `correlation_rules_version`; its `toJson()`
-  therefore cannot round-trip these fields.
-- `mobile/lib/screens/report_screen.dart` does not render top-level
-  correlation items. `Finding.relations` is a separate per-finding field and
-  is not a substitute for report-level correlations.
-- The service test's mock response has no correlation data. The model and
-  widget tests do not cover populated correlations, an empty correlation list
-  with a retained rules version, or correlation rendering.
-- The repository currently has a Backend-only GitHub Actions workflow; no
-  Flutter workflow is configured. Flutter test and analyzer results have not
-  been recorded in this verification run.
+- `mobile/lib/services/scan_api_service.dart` sends
+  `POST /api/v1/scan` with `target_url`,
+  `authorization_confirmed`, and requests the expanded response option.
+- `ScanReport.fromJson()` reads the base report fields, summary, and findings;
+  `ReportScreen` renders the report and its individual findings.
+- Mobile tests cover request fields, API response parsing, invalid responses,
+  timeouts, service errors, the authorized scan flow, and report rendering.
+  These are primarily mocked/service-level tests, not a live deployed
+  Flutter-to-Flask smoke test.
 
-For full-team Week 1 acceptance, the mobile owner must add a typed correlation
-model for the nine-field item contract
-(`correlation_id`, `contributing_check_ids`, `severity`, `confidence`,
-`explanation`, `recommendation`, `rules_version`, `rule_version`, and
-`limitations`), retain the report-level rules version
-(`2.0.0` in the current backend), display correlations separately from
-findings, and add model/service/widget coverage for both populated and empty
-lists. Then run `flutter test` and `flutter analyze` on the final mobile
-commit (preferably through a Flutter CI job). Do not count correlation items
-as findings or summary counters.
+The absence of top-level correlation parsing and display is **not a Week 1
+acceptance failure** under the approved four-week Bilsan plan. That plan places
+the integration of Correlation output and coordination with its Flutter display
+in Week 4 (29 November). The first-week acceptance criteria are the stable
+Health/Scan API and JSON contract, authorization and target validation,
+resource controls, and the basic scan journey reaching Flutter. Backend
+correlation output is already exposed and covered by Backend/API tests as
+preparatory integration, but its dedicated mobile model, UI, and widget tests
+belong to the later correlation milestone.
 
-The Backend/API portion is complete and has a passing GitHub Actions run.
-The full-team Week 1 milestone remains open until the mobile acceptance items
-above are implemented and verified.
+No Flutter GitHub Actions workflow is currently configured, so this repository
+does not provide CI evidence for `flutter test` or `flutter analyze`. The
+mobile source and its tests were reviewed, but these Flutter commands have not
+been reported as executed here. This is a mobile verification follow-up, not a
+reason to keep Bilsan's Week 1 Backend/API scope open. A live deployed
+Flutter-to-Flask smoke test also remains a separate integration validation.
+
+**Week 1 Backend decision:** Bilsan's Week 1 scope is complete: the required
+API behavior, validation and target restrictions, resource/response limits,
+controlled DNS-to-pinned-IP-to-TLS integration evidence, basic Flutter API
+contract path, automated Backend regression suite, Git review, and
+documentation are present on `main`. This does not mean the four-week project
+or the later correlation/mobile milestones are complete.
 
 ## 9. Test Execution
 
@@ -279,9 +282,9 @@ List collected tests without executing them using:
 .\.venv\Scripts\python.exe -m pytest --collect-only -q
 
 The full suite was executed through GitHub Actions on 2026-11-16
-at implementation commit `104e843cbb016e9a1739aeb76de35f23e9db4265`.
-GitHub Actions run [#31](https://github.com/dalalcoderwitch/CyberShield/actions/runs/43875650899)
-completed successfully with `1009 passed in 6.84s`. This run includes
+at implementation commit `eb1d40c7e77e97d33d606475054dbd5ab6862e01`.
+GitHub Actions run [#32](https://github.com/dalalcoderwitch/CyberShield/actions/runs/43877410712)
+completed successfully with `1009 passed in 5.10s`. This run includes
 the Flask-to-report-engine correlation integration regression, the
 seven-rule correlation JSON schema/serialization regression, exact
 Flask request-body boundary tests, bounded chunked-response sampling,
@@ -296,7 +299,7 @@ A test collection count alone does not indicate that the tests passed. Record th
 
 ## 10. Current Acceptance Criteria
 
-- The latest recorded implementation run completed with 1009 passed in 6.84 seconds on implementation commit `104e843cbb016e9a1739aeb76de35f23e9db4265` (GitHub Actions run [#31](https://github.com/dalalcoderwitch/CyberShield/actions/runs/43875650899)); later code changes require a new successful run.
+- The latest recorded implementation run completed with 1009 passed in 5.10 seconds on implementation commit `eb1d40c7e77e97d33d606475054dbd5ab6862e01` (GitHub Actions run [#32](https://github.com/dalalcoderwitch/CyberShield/actions/runs/43877410712)); later code changes require a new successful run.
 - The test count must be updated whenever tests are added or removed.
 - All current automated tests pass.
 - The test plan distinguishes mocked behavior from real network verification.
