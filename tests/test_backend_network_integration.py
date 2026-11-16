@@ -506,7 +506,8 @@ Sydvx0FeNWmqPBhmlaj0SqH0
         findings = {item["check_id"]: item for item in report["findings"]}
         assert findings["https_connection"]["status"] == "passed"
         assert findings["header_hsts"]["status"] == "passed"
-        assert findings["header_csp"]["status"] == "passed"
+        assert findings["header_csp"]["status"] == "warning"
+        assert "جودة السياسة" in findings["header_csp"]["explanation"]
 
         assert dns_lookups.count(("localhost", 443)) == 1
         assert requested_socket_addresses == [("127.0.0.1", 443)]
