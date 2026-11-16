@@ -127,7 +127,7 @@ These tests cover the health endpoint, request validation, authorization confirm
 - `test_scan_maps_detailed_resolution_errors_to_api_responses`, parameterized across the six detailed resolver outcomes.
 - `test_scan_passes_detailed_resolved_target_to_engine`, verifying that the same validated target is passed to the engine without a second DNS lookup.
 
-The API test file also covers request-size and method errors, rate limiting, scan capacity, deadlines, CORS, and safe error handling. The test `test_scan_api_returns_correlation_generated_by_real_report_engine` exercises the Flask route and Backend adapter with the real report and correlation engine; only the external HTTP response and DNS evaluators are isolated with fixtures. It verifies that a correlation generated from actual cookie-check findings reaches the API response without being counted as a finding.
+The API test file also covers request-size and method errors, rate limiting, scan capacity, deadlines, CORS, and safe error handling. The test `test_scan_api_returns_correlation_generated_by_real_report_engine` exercises the Flask route and Backend adapter with the real report and correlation engine; only the external HTTP response and DNS evaluators are isolated with fixtures. It verifies that a correlation generated from actual cookie-check findings reaches the API response without being counted as a finding. The scanner test `test_all_correlation_items_match_the_versioned_json_contract` checks all seven rules against the exact nine-field JSON schema, field types, catalog version, and JSON round-trip serialization.
 
 ### 6.2 Report Tests — tests/test_report.py
 
@@ -218,15 +218,15 @@ List collected tests without executing them using:
 .\.venv\Scripts\python.exe -m pytest --collect-only -q
 
 The full suite was executed through GitHub Actions on 2026-11-16
-at current `main` commit `7bc925b945dd3b42b365a2e182059314f4c34e62`.
-GitHub Actions run [#11](https://github.com/dalalcoderwitch/CyberShield/actions/runs/43868841102)
-completed successfully with `1000 passed in 2.75s`. This run includes
-the Flask-to-report-engine correlation integration regression described
-in Section 6.1. The network response and DNS evaluators were fixture-
-isolated; this is not a live-network end-to-end security test. This is
-an executed result from the current branch head, not a test-collection
-estimate. Re-run the workflow after subsequent code changes and update
-this record with the newest run.
+at current `main` commit `b202cc617a06b983264f6cd1fadb4a739d342afc`.
+GitHub Actions run [#14](https://github.com/dalalcoderwitch/CyberShield/actions/runs/43869278518)
+completed successfully with `1001 passed in 3.21s`. This run includes
+the Flask-to-report-engine correlation integration regression and the
+seven-rule correlation JSON schema/serialization regression. External
+HTTP response and DNS evaluations remain fixture-isolated; this is not a
+live-network end-to-end security test. This is an executed result from the
+current branch head, not a test-collection estimate. Re-run the workflow
+after subsequent code changes and update this record with the newest run.
 
 A test collection count alone does not indicate that the tests passed. Record the actual execution result separately.
 
