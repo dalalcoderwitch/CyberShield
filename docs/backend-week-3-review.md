@@ -136,3 +136,30 @@ The API may describe a standardized header name when explaining an ambiguous res
 ## Next step — Saturday
 
 Proceed with Backend-owned API integration for `open_redirect` and `sensitive_file_exposure`: verify safe result propagation, non-following of redirect destinations, sanitized location evidence, and no raw file contents or sensitive values in API responses or Backend logs. Scanner probe/evaluator implementation remains with Dalal.
+
+
+## Saturday — Open Redirect and sensitive-file API integration
+
+**Status:** Closed after full CI verification.
+
+Backend-owned API tests exercise the real Flask/report path for the two scheduled checks:
+
+- An external redirect destination is classified as `warning`; a same-origin relative destination is `passed`.
+- Multiple conflicting `Location` values and unavailable raw multi-value evidence remain `not_verified`.
+- The test records the original target request and the bounded redirect probe; no request is followed to the external redirect destination.
+- An isolated six-path Disclosure result with a confirmed `dotenv` marker is serialized as a sanitized `warning` with an index/count only.
+- Raw sample values, secret values, and private external redirect tokens are asserted absent from API responses and Backend logs.
+
+### Saturday verification evidence
+
+- **Commit tested:** `6e9bf32cba5413891364c2c623c5ab561e795ffa`
+- **Workflow:** Backend tests — [Run #69](https://github.com/dalalcoderwitch/CyberShield/actions/runs/43891379189)
+- **Job:** `pytest` — completed successfully
+- **Command:** `python -m pytest -q`
+- **Result:** `1045 passed in 5.48s`
+
+**Saturday is closed.** No files under `security_scanner/` or `mobile/` were modified.
+
+## Next step — Sunday
+
+Proceed with the remaining Backend-owned Disclosure API checks: `source_maps_exposure`, `directory_listing`, `server_information_disclosure`, `error_information_disclosure`, and `public_security_files`. Verify status preservation, fixed-scope evidence, and absence of raw source maps, directory entries, server versions, error text, or public-file contents in API responses and Backend logs. Scanner collection/evaluator implementation remains with Dalal.
