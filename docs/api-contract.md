@@ -86,10 +86,11 @@ Content type:
 |---|---|---|---|
 | `target_url` | string | Yes | Requested target URL |
 | `authorization_confirmed` | boolean | Yes | Confirms that the user states they have appropriate authorization |
+| `include_expanded_checks` | boolean | No | Requests the additional implemented checks; defaults to `false` when omitted |
 
 The server must validate the request independently.
 
-The authorization confirmation is not, by itself, a technical security
+The optional `include_expanded_checks` field must be a boolean when supplied; a non-boolean value is rejected as `INVALID_REQUEST`. Omitted values default to `false`. The Flutter client currently requests expanded checks.\n\nThe authorization confirmation is not, by itself, a technical security
 control and does not make an otherwise prohibited target safe.
 
 The server must apply its target security policy before making an
@@ -315,6 +316,9 @@ avoid exposing internal exception details.
 | `400` | `INVALID_REQUEST` | Request JSON or fields are invalid |
 | `403` | `AUTHORIZATION_REQUIRED` | Authorization confirmation is false |
 | `403` | `TARGET_NOT_ALLOWED` | The target is rejected by the target security policy |
+| `502` | `DNS_RESOLUTION_FAILED` | DNS resolution failed or returned no usable addresses |
+| `504` | `DNS_TIMEOUT` | The DNS caller wait limit expired before resolution completed |
+| `503` | `DNS_CAPACITY_EXCEEDED` | No DNS lookup slot was available |
 | `405` | `METHOD_NOT_ALLOWED` | The HTTP method is not supported for this endpoint |
 | `413` | `REQUEST_TOO_LARGE` | The request exceeds the configured size limit |
 | `429` | `RATE_LIMIT_EXCEEDED` | The source IP exceeded the in-process scan rate limit or the source tracking table is full |
@@ -339,7 +343,7 @@ field.
 
 - API `200`: a report was returned.
 - API `400`: request data is invalid.
-- API `403`: authorization confirmation or target policy prevents scanning.
+- API `403`: authorization confirmation or target policy prevents scanning.\n- API `502`: DNS resolution failed or returned no usable addresses.\n- API `503`: scan capacity or DNS lookup capacity is exhausted.\n- API `504`: the total scan deadline expired, or the DNS lookup wait limit expired (`DNS_TIMEOUT`).
 - API `405`: the HTTP method is not supported for the requested endpoint.
 - API `413`: the request body exceeds the configured size limit.
 - API `429`: the source IP exceeded the in-process request rate limit; the request was rejected before target resolution and scanning.
