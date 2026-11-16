@@ -280,7 +280,10 @@ Sydvx0FeNWmqPBhmlaj0SqH0
                 time.sleep(2.5)
                 try:
                     self.wfile.write(
-                        f"{len(body):X}\\r\\n".encode("ascii") + body + b"\\r\\n0\\r\\n\\r\\n"
+                        f"{len(body):X}".encode("ascii")
+                        + bytes((13, 10))
+                        + body
+                        + bytes((13, 10, 48, 13, 10, 13, 10))
                     )
                     self.wfile.flush()
                 except OSError:
