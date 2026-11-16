@@ -281,6 +281,18 @@ contract path, automated Backend regression suite, Git review, and
 documentation are present on `main`. This does not mean the four-week project
 or the later correlation/mobile milestones are complete.
 
+**Week 2 Backend decision — 2026-11-16:** Bilsan's Week 2 API-integration scope is
+complete on `main`. The seven planned TLS, redirect, and response-header findings
+are covered at the Flask/report boundary; single-check failures preserve the
+remaining report, summary counts are checked, and redirect destinations are not
+followed by the API. The latest implementation/integration suite result is 1024
+passed (GitHub Actions run #54). The Backend changes are limited to
+`tests/test_api.py`, `docs/api-contract.md`, `docs/test-plan.md`, and
+`docs/backend-week-2-summary.md`. No `security_scanner/` or `mobile/` files were
+changed. This closes Bilsan's Week 2 Backend work; scanner-owner sign-off and
+Flutter-owned test execution remain with Dalal and Ahmad respectively, and live
+public-network/deployment verification remains outside the automated test proof.
+
 ## 9. Test Execution
 
 Run the complete automated suite from the project root using:
@@ -292,9 +304,9 @@ List collected tests without executing them using:
 .\.venv\Scripts\python.exe -m pytest --collect-only -q
 
 The full suite was executed through GitHub Actions on 2026-11-16
-at implementation commit `a5400d08c139b9d75aede1438c822d74133395ce`.
-GitHub Actions run [#52](https://github.com/dalalcoderwitch/CyberShield/actions/runs/43884580764)
-completed successfully with `1024 passed in 6.14s`. This run includes
+at implementation and Week 2 integration commit `5b58acfabd6888bdc999c8510ac69aa730e43bed`.
+GitHub Actions run [#54](https://github.com/dalalcoderwitch/CyberShield/actions/runs/43885027429)
+completed successfully with `1024 passed in 6.71s`. This run includes
 the Week 2 Flask pass-through and real report-engine assertions, valid,
 expired, malformed, and evaluator-error certificate-date outcomes, a verified
 handshake with unavailable chain metadata, missing negotiated TLS metadata,
@@ -314,7 +326,7 @@ A test collection count alone does not indicate that the tests passed. Record th
 
 ## 10. Current Acceptance Criteria
 
-- The latest recorded implementation run completed with 1024 passed in 6.14 seconds on implementation commit `a5400d08c139b9d75aede1438c822d74133395ce` (GitHub Actions run [#52](https://github.com/dalalcoderwitch/CyberShield/actions/runs/43884580764)); later code changes require a new successful run.
+- The latest recorded implementation and Week 2 integration run completed with 1024 passed in 6.71 seconds on commit `5b58acfabd6888bdc999c8510ac69aa730e43bed` (GitHub Actions run [#54](https://github.com/dalalcoderwitch/CyberShield/actions/runs/43885027429)); later code changes require a new successful run.
 - The test count must be updated whenever tests are added or removed.
 - All current automated tests pass.
 - The test plan distinguishes mocked behavior from real network verification.
