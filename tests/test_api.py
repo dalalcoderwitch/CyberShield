@@ -1594,6 +1594,50 @@ def test_scan_can_request_expanded_checks(monkeypatch):
     assert report["summary"]["total"] == len(report["findings"]) == 24
 
 
+def test_scan_expanded_report_keeps_empty_correlations_and_version(
+    monkeypatch,
+):
+    """Expanded mode includes correlation metadata even when no rule matches."""
+    app = api_module.create_app()
+    client = app.test_client()
+    captured = {}
+    engine_report = {
+        "status": "completed",
+        "summary": {"total": 5},
+        "findings": [{}] * 5,
+        "correlations": [],
+        "correlation_rules_version": "2.0.0",
+    }
+
+    monkeypatch.setattr(
+        api_module,
+        "resolve_target",
+        lambda url, deadline=None: object(),
+    )
+
+    def fake_scan(url, resolved_target=None, deadline=None,
+                  include_expanded_checks=False):
+        captured["include_expanded_checks"] = include_expanded_checks
+        return engine_report
+
+    monkeypatch.setattr(api_module, "scan_target", fake_scan)
+
+    response = client.post(
+        "/api/v1/scan",
+        json={
+            "target_url": "https://example.com",
+            "authorization_confirmed": True,
+            "include_expanded_checks": True,
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured["include_expanded_checks"] is True
+    assert response.get_json() == engine_report
+    assert response.json["correlations"] == []
+    assert response.json["correlation_rules_version"] == "2.0.0"
+
+
 def test_scan_base_mode_omits_correlation_metadata(monkeypatch):
     """Base mode does not expose expanded-only correlation metadata."""
     app = api_module.create_app()
