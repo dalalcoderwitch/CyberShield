@@ -129,6 +129,8 @@ These tests cover the health endpoint, request validation, authorization confirm
 
 The API test file also covers request-size and method errors, rate limiting, scan capacity, deadlines, CORS, and safe error handling. The test `test_scan_api_returns_correlation_generated_by_real_report_engine` exercises the Flask route and Backend adapter with the real report and correlation engine; only the external HTTP response and DNS evaluators are isolated with fixtures. It verifies that a correlation generated from actual cookie-check findings reaches the API response without being counted as a finding. The scanner test `test_all_correlation_items_match_the_versioned_json_contract` checks all seven rules against the exact nine-field JSON schema, field types, catalog version, and JSON round-trip serialization.
 
+The Week 2 Backend integration regression `test_scan_api_preserves_week2_findings_and_partial_results` sends the five foundational and seven Week 2 IDs through the Flask route and checks that finding fields, all five statuses, and summary counts are preserved unchanged. Its controlled engine fixture sets one Week 2 result to `error` and verifies the remaining eleven findings remain in the response. Existing report/scanner tests separately exercise the underlying TLS, redirect, and header evaluators.
+
 ### 6.2 Report Tests — tests/test_report.py
 
 Representative report tests include:
