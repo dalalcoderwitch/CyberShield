@@ -109,7 +109,7 @@ If the scanner cannot obtain a usable response, header checks must not be marked
 
 ## 6. Automated Test Files
 
-The automated test suite is organized into three files.
+The automated test suite is organized into four files.
 
 ### 6.1 API Tests — tests/test_api.py
 
@@ -160,6 +160,22 @@ Representative scanner tests include:
 
 These tests cover URL restrictions, header evaluation, DNS filtering, redirect handling, TLS failure behavior, and the scanner's configured connection behavior.
 
+### 6.4 Backend Network Integration Tests — tests/test_backend_network_integration.py
+
+The Backend-owned integration file covers bounded response sampling and the
+Flask-to-scanner network boundary without changing scanner implementation files:
+
+- `test_bounded_identity_sample_handles_chunked_body_without_content_length`
+- `test_bounded_identity_sample_never_exceeds_limit_for_large_chunks`
+- `test_bounded_identity_sample_marks_truncated_content_length_incomplete`
+- `test_response_and_session_are_closed_after_body_read_failure`
+- `test_flask_expanded_scan_pins_dns_ip_and_verifies_tls_on_real_socket`
+
+The Flask integration uses a controlled DNS fixture and a local TLS server. It
+checks the pinned socket peer, SNI, certificate hostname validation, a mismatched
+hostname, chunked response sampling capped at 16 KiB, and read-timeout behavior.
+It is a controlled local integration test rather than a public-network test.
+
 The existence of a test does not automatically establish that the underlying security property has been proven against a real network environment.
 
 ## 7. Mocked Tests and Real-Environment Tests
@@ -188,7 +204,7 @@ that a hostname mismatch does not produce a successful HTTPS finding. This is a
 controlled integration test: it does not claim to validate public recursive DNS or
 an external production network.
 
-These tests provide coverage of individual connection and TLS properties. They do not prove the complete scanner path from DNS validation through the pinned outbound connection, or establish behavior in every production network environment.
+Together, these tests exercise the complete DNS-validation-to-pinned-socket-to-TLS path through Flask in a controlled local environment, including certificate hostname mismatch rejection. They do not establish behavior with public recursive DNS, DNS rebinding in production, every IPv4/IPv6 network path, or arbitrary external production networks.
 
 Automated mocked regression tests also verify that a validated DNS result is reused without a second lookup, that prohibited IPv4 and IPv6 destinations are rejected while a public IPv6 address is accepted, and that redirects are not followed automatically. These tests do not constitute live-network verification.
 
@@ -196,23 +212,26 @@ A manual request to a public website is a smoke test only. It is not a substitut
 
 The current test suite must therefore be described as a development baseline, not a complete security assessment.
 
-## 8. Additional Tests Required
+## 8. Remaining Verification Work
 
-The following cases remain to be implemented or independently verified:
+The following points are covered by the current automated suite:
 
-- The local expired-certificate and untrusted-certificate handshake tests cover representative certificate-validation failures. Additional certificate-chain edge cases remain separate work.
-- The Backend-owned Flask integration test now covers controlled DNS validation through the pinned IP socket, actual socket peer observation, received SNI, successful hostname verification, and rejection of a mismatched hostname in the same API path. The resolver answer is deterministic test data, not public DNS.
-- The response-sample tests cover a paced chunked response without Content-Length, a strict 16 KiB sample cap, an incomplete body with an overstated Content-Length, and bounded helper behavior for large chunks.
-- The Backend-owned failure-path test verifies that response and session resources close after response-body reading raises an incomplete-read error.
-- DNS failures, empty results, simulated DNS timeouts, and DNS-capacity exhaustion are covered by automated tests. Additional resolver exception variants and real operating-system DNS behavior remain outstanding.
-- Duplicate or conflicting security headers.
-- Automated API tests cover malformed JSON, invalid request fields, request-size limits, and unsupported HTTP methods; deployed proxy limits still require separate verification.
-- Multi-process and shared rate-limit behavior, including trusted-proxy source identification. The current automated tests cover only the in-process limit.
-- Real-network deadline behavior under slow DNS, connection, and read conditions. Current tests cover injected deadlines and simulated slow DNS.
-- Confirmation that unexpected exceptions do not expose stack traces or sensitive details.
-- Regression tests ensuring rejected targets never cause outbound requests.
+- Local TLS tests reject an untrusted self-signed certificate and an expired certificate, and verify hostname mismatch behavior.
+- A Flask-level controlled integration test follows validated DNS data through the pinned IP socket, observes the connected peer and SNI, verifies the matching certificate hostname, and rejects a mismatched hostname.
+- The chunked-response integration sends a paced body without Content-Length; the scanner reads no more than 16 KiB, closes the response after reaching the cap, and does not expose the raw sample in the API report.
+- A delayed local response withholds its first body byte beyond the scanner's two-second read timeout; the sample remains incomplete rather than being treated as full evidence.
+- A truncated response with a declared Content-Length is treated as incomplete, and response/session cleanup is checked after the body read fails.
+- Existing local TLS scanner tests reject responses with excessive header counts and an oversized header line. Existing tests also cover duplicate security headers, disallowed IPv4/IPv6 destinations, DNS failure/capacity, redirects, and deadline handling.
 
-These cases must remain marked as outstanding until they have been implemented, executed, and reviewed.
+The following operational and deployment cases remain outside the proof provided by this test suite:
+
+- Public recursive DNS and operating-system resolver behavior under production conditions.
+- Full live-network verification across external IPv4 and IPv6 destinations, including DNS rebinding and time-of-check/time-of-use behavior.
+- Multi-process/shared rate limiting and trusted reverse-proxy source identification; the current Flask rate limit is in-process.
+- Deployed reverse-proxy request-body and response-header limits.
+- Broader certificate-chain edge cases and real-world read/connect timeout behavior under varied network conditions.
+
+These are deployment or broader security-validation items; they must not be represented as established merely because the automated suite passes.
 
 ## 9. Test Execution
 
@@ -225,13 +244,14 @@ List collected tests without executing them using:
 .\.venv\Scripts\python.exe -m pytest --collect-only -q
 
 The full suite was executed through GitHub Actions on 2026-11-16
-at implementation commit `03ec104fd03757cc097a265a08b93635a0d693e2`.
-GitHub Actions run [#26](https://github.com/dalalcoderwitch/CyberShield/actions/runs/43874731164)
-completed successfully with `1009 passed in 3.51s`. This run includes
+at implementation commit `5c32b096324d5ba8010a6ef6298a7e7ffac62a24`.
+GitHub Actions run [#30](https://github.com/dalalcoderwitch/CyberShield/actions/runs/43875434967)
+completed successfully with `1009 passed in 6.02s`. This run includes
 the Flask-to-report-engine correlation integration regression, the
 seven-rule correlation JSON schema/serialization regression, exact
-Flask request-body boundary tests, bounded response-sample tests,
-resource cleanup after a body-read failure, and the controlled
+Flask request-body boundary tests, bounded chunked-response sampling,
+a delayed-body read-timeout test, truncated-body handling, resource
+cleanup after a body-read failure, and the controlled
 Flask-to-real-local-TLS integration test. The controlled TLS integration
 uses test DNS data and a local socket; it is not a live public-DNS or
 external-network test. Re-run the workflow after subsequent code changes
@@ -241,7 +261,7 @@ A test collection count alone does not indicate that the tests passed. Record th
 
 ## 10. Current Acceptance Criteria
 
-- The latest recorded implementation run completed with 1009 passed in 3.51 seconds on implementation commit `03ec104fd03757cc097a265a08b93635a0d693e2` (GitHub Actions run [#26](https://github.com/dalalcoderwitch/CyberShield/actions/runs/43874731164)); later code changes require a new successful run.
+- The latest recorded implementation run completed with 1009 passed in 6.02 seconds on implementation commit `5c32b096324d5ba8010a6ef6298a7e7ffac62a24` (GitHub Actions run [#30](https://github.com/dalalcoderwitch/CyberShield/actions/runs/43875434967)); later code changes require a new successful run.
 - The test count must be updated whenever tests are added or removed.
 - All current automated tests pass.
 - The test plan distinguishes mocked behavior from real network verification.
