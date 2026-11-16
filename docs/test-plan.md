@@ -180,6 +180,14 @@ The test named test_request_uses_pinned_ip_and_tls_hostname_through_http_stack f
 
 The test named test_real_tls_rejects_untrusted_self_signed_certificate performs local TLS handshakes and records the SNI values received by the local server. It verifies the expected values (localhost, wrong.example, and localhost) while checking certificate trust and hostname matching.
 
+The Backend-owned test `test_flask_expanded_scan_pins_dns_ip_and_verifies_tls_on_real_socket`
+extends this proof through the Flask route and report adapter. It uses a controlled
+local DNS answer and a real local TLS socket, records the requested pinned address
+and the connected peer, verifies the SNI value and certificate hostname, and checks
+that a hostname mismatch does not produce a successful HTTPS finding. This is a
+controlled integration test: it does not claim to validate public recursive DNS or
+an external production network.
+
 These tests provide coverage of individual connection and TLS properties. They do not prove the complete scanner path from DNS validation through the pinned outbound connection, or establish behavior in every production network environment.
 
 Automated mocked regression tests also verify that a validated DNS result is reused without a second lookup, that prohibited IPv4 and IPv6 destinations are rejected while a public IPv6 address is accepted, and that redirects are not followed automatically. These tests do not constitute live-network verification.
@@ -192,11 +200,10 @@ The current test suite must therefore be described as a development baseline, no
 
 The following cases remain to be implemented or independently verified:
 
-- Expired TLS certificates and additional certificate-validation edge cases.
-- End-to-end controlled verification of the scanner's DNS-validation-to-pinned-connection flow, including the actual socket peer IP, received SNI, and hostname validation in one test. Existing tests cover parts of this flow separately or intercept before socket connection.
-- Slow responses and responses with missing or misleading Content-Length headers.
-- Chunked responses and response-size limits.
-- Cleanup of response and session resources after failures.
+- The local expired-certificate and untrusted-certificate handshake tests cover representative certificate-validation failures. Additional certificate-chain edge cases remain separate work.
+- The Backend-owned Flask integration test now covers controlled DNS validation through the pinned IP socket, actual socket peer observation, received SNI, successful hostname verification, and rejection of a mismatched hostname in the same API path. The resolver answer is deterministic test data, not public DNS.
+- The response-sample tests cover a paced chunked response without Content-Length, a strict 16 KiB sample cap, an incomplete body with an overstated Content-Length, and bounded helper behavior for large chunks.
+- The Backend-owned failure-path test verifies that response and session resources close after response-body reading raises an incomplete-read error.
 - DNS failures, empty results, simulated DNS timeouts, and DNS-capacity exhaustion are covered by automated tests. Additional resolver exception variants and real operating-system DNS behavior remain outstanding.
 - Duplicate or conflicting security headers.
 - Automated API tests cover malformed JSON, invalid request fields, request-size limits, and unsupported HTTP methods; deployed proxy limits still require separate verification.
@@ -218,24 +225,23 @@ List collected tests without executing them using:
 .\.venv\Scripts\python.exe -m pytest --collect-only -q
 
 The full suite was executed through GitHub Actions on 2026-11-16
-at current `main` commit `4b7e355e3624b03fdc0ce741cf0f7fa6918dea30`.
-GitHub Actions run [#22](https://github.com/dalalcoderwitch/CyberShield/actions/runs/43872850863)
-completed successfully with `1004 passed in 3.39s`. This run includes
+at implementation commit `03ec104fd03757cc097a265a08b93635a0d693e2`.
+GitHub Actions run [#26](https://github.com/dalalcoderwitch/CyberShield/actions/runs/43874731164)
+completed successfully with `1009 passed in 3.51s`. This run includes
 the Flask-to-report-engine correlation integration regression, the
-seven-rule correlation JSON schema/serialization regression, and exact
-request-body boundary tests proving that a body of exactly 16 KiB is
-accepted by Flask's size gate while a body one byte larger is rejected
-with HTTP 413 before DNS resolution. External HTTP response and DNS
-evaluations remain fixture-isolated; this is not a live-network
-end-to-end security test. This is an executed result from the current
-branch head, not a test-collection estimate. Re-run the workflow after
-subsequent code changes and update this record with the newest run.
+seven-rule correlation JSON schema/serialization regression, exact
+Flask request-body boundary tests, bounded response-sample tests,
+resource cleanup after a body-read failure, and the controlled
+Flask-to-real-local-TLS integration test. The controlled TLS integration
+uses test DNS data and a local socket; it is not a live public-DNS or
+external-network test. Re-run the workflow after subsequent code changes
+and update this record with the newest run.
 
 A test collection count alone does not indicate that the tests passed. Record the actual execution result separately.
 
 ## 10. Current Acceptance Criteria
 
-- The latest recorded implementation run completed with 1004 passed in 3.39 seconds on current `main` commit `4b7e355e3624b03fdc0ce741cf0f7fa6918dea30` (GitHub Actions run [#22](https://github.com/dalalcoderwitch/CyberShield/actions/runs/43872850863)); later code changes require a new successful run.
+- The latest recorded implementation run completed with 1009 passed in 3.51 seconds on implementation commit `03ec104fd03757cc097a265a08b93635a0d693e2` (GitHub Actions run [#26](https://github.com/dalalcoderwitch/CyberShield/actions/runs/43874731164)); later code changes require a new successful run.
 - The test count must be updated whenever tests are added or removed.
 - All current automated tests pass.
 - The test plan distinguishes mocked behavior from real network verification.
