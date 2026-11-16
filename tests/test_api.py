@@ -1529,11 +1529,19 @@ def test_unhandled_internal_server_error_returns_safe_json():
 
 
 def test_scan_can_request_expanded_checks(monkeypatch):
-    """تمرير خيار الفحوص الموسعة صراحةً من API إلى المحرك."""
+    """تمرير خيار الفحوص الموسعة والحفاظ على بيانات المحرك كما هي."""
     app = api_module.create_app()
     client = app.test_client()
     resolved = object()
     captured = {}
+    engine_report = {
+        "status": "completed",
+        "findings": [{}] * 24,
+        # Metadata is treated as opaque engine output until the team
+        # approves its shared API/Flutter contract.
+        "correlations": [{"rule_id": "opaque-test-rule"}],
+        "correlation_rules_version": "test-version",
+    }
 
     monkeypatch.setattr(
         api_module,
@@ -1545,7 +1553,7 @@ def test_scan_can_request_expanded_checks(monkeypatch):
                   include_expanded_checks=False):
         captured["include_expanded_checks"] = include_expanded_checks
         captured["resolved_target"] = resolved_target
-        return {"status": "completed", "findings": [{}] * 24}
+        return engine_report
 
     monkeypatch.setattr(api_module, "scan_target", fake_scan)
 
@@ -1562,6 +1570,7 @@ def test_scan_can_request_expanded_checks(monkeypatch):
     assert captured["include_expanded_checks"] is True
     assert captured["resolved_target"] is resolved
     assert len(response.json["findings"]) == 24
+    assert response.get_json() == engine_report
 
 
 
