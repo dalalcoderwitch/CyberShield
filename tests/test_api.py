@@ -104,6 +104,60 @@ def test_scan_rejects_oversized_request_before_target_resolution(monkeypatch):
     assert response.json["error"]["code"] == "REQUEST_TOO_LARGE"
 
 
+def test_scan_accepts_request_at_exact_flask_body_limit(monkeypatch):
+    """The configured 16 KiB Flask body limit is inclusive."""
+
+    app = api_module.create_app()
+    client = app.test_client()
+    limit = app.config["MAX_CONTENT_LENGTH"]
+    body = b'{"target_url":"https://example.com","authorization_confirmed":true}'
+    body += b" " * (limit - len(body))
+
+    def reject_target_after_parsing(url, deadline=None):
+        assert url == "https://example.com"
+        return None
+
+    monkeypatch.setattr(api_module, "resolve_target", reject_target_after_parsing)
+
+    response = client.post(
+        "/api/v1/scan",
+        data=body,
+        content_type="application/json",
+    )
+
+    assert len(body) == limit
+    assert response.status_code == 403
+    assert response.get_json()["error"]["code"] == "TARGET_NOT_ALLOWED"
+
+
+def test_scan_rejects_request_one_byte_over_flask_body_limit_before_dns(
+    monkeypatch,
+):
+    """A body one byte over 16 KiB is rejected before target resolution."""
+
+    app = api_module.create_app()
+    client = app.test_client()
+    limit = app.config["MAX_CONTENT_LENGTH"]
+    body = b'{"target_url":"https://example.com","authorization_confirmed":true}'
+    body += b" " * (limit + 1 - len(body))
+
+    def unexpected_resolve(*args, **kwargs):
+        raise AssertionError("Oversized bodies must be rejected before DNS.")
+
+    monkeypatch.setattr(api_module, "resolve_target", unexpected_resolve)
+
+    response = client.post(
+        "/api/v1/scan",
+        data=body,
+        content_type="application/json",
+    )
+
+    assert len(body) == limit + 1
+    assert response.status_code == 413
+    assert response.is_json
+    assert response.get_json()["error"]["code"] == "REQUEST_TOO_LARGE"
+
+
 def test_scan_rejects_unsupported_method_with_json():
     """إرجاع 405 بصيغة JSON عند استخدام GET لمسار الفحص."""
 
