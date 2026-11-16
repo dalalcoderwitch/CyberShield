@@ -786,16 +786,18 @@ def test_scan_api_preserves_week2_header_evaluator_results(
 
 
 @pytest.mark.parametrize(
-    "not_after,expected_status",
+    "not_after,raise_parse_error,expected_status",
     [
-        ("Jan 01 00:00:00 2099 GMT", "passed"),
-        ("Jan 01 00:00:00 2020 GMT", "warning"),
-        ("not-a-valid-asn1-date", "not_verified"),
+        ("Jan 01 00:00:00 2099 GMT", False, "passed"),
+        ("Jan 01 00:00:00 2020 GMT", False, "warning"),
+        ("not-a-valid-asn1-date", False, "not_verified"),
+        ("Jan 01 00:00:00 2099 GMT", True, "error"),
     ],
 )
 def test_scan_api_preserves_tls_expiry_outcome_and_other_week2_checks(
     monkeypatch,
     not_after,
+    raise_parse_error,
     expected_status,
 ):
     """Exercise certificate-date outcomes through Flask and the real report engine."""
@@ -809,6 +811,14 @@ def test_scan_api_preserves_tls_expiry_outcome_and_other_week2_checks(
         "resolve_target",
         lambda url, deadline=None: object(),
     )
+    if raise_parse_error:
+        def fail_date_parser(_value):
+            raise RuntimeError("private certificate date parser detail")
+
+        monkeypatch.setattr(
+            "security_scanner.checks.tls_checks._parse_asn1_date",
+            fail_date_parser,
+        )
 
     headers = {
         "Strict-Transport-Security": "max-age=31536000",
