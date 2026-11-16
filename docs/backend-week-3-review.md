@@ -190,6 +190,33 @@ The API response and Backend logs are checked against private source-map, filena
 
 **Sunday is closed.** No files under `security_scanner/` or `mobile/` were modified.
 
-## Next step — Monday
+## Monday — final integration audit and Week 3 closure
 
-Perform the final Backend integration audit for the complete expanded report: verify all 23 expanded checks (the seven Week 2 checks and eleven Week 3 checks plus the existing expanded additions) remain present through Flask, validate finding fields and summary counters, review the complete Git diff, run the final full suite, and close Week 3. Do not change scanner-owned or Flutter-owned files.
+**Status:** Closed after full CI verification.
+
+The Backend-owned expanded-report integration test now verifies the complete report against the registry:
+
+- All **30 findings** are present exactly once: five foundational findings plus 25 expanded findings.
+- The 25 expanded findings comprise seven Week 2 checks, eleven Week 3 checks, and seven existing DNS/cache/passive checks.
+- Every finding satisfies the required nine-field API contract, has an allowed status, and retains list-form limitations.
+- The five summary status counters match the actual findings, and the total equals the findings array length.
+- Expanded correlation metadata and the cookie-defense correlation remain present and version-consistent.
+
+### Final verification evidence
+
+- **Commit tested:** `132cca6abd87468a24292b2a15e8c84219115d64`
+- **Workflow:** Backend tests — [Run #73](https://github.com/dalalcoderwitch/CyberShield/actions/runs/43892030768)
+- **Job:** `pytest` — completed successfully
+- **Command:** `python -m pytest -q`
+- **Result:** `1048 passed in 5.90s`
+
+### Final Git diff audit
+
+Compared with the Week 2 close baseline `a422033e9b7966d16eb7a47c21893ddaefd7c75c`, all Week 3 Backend changes are limited to:
+
+- `tests/test_api.py`
+- `docs/backend-week-3-review.md`
+
+No files under `security_scanner/` or `mobile/` were modified. The final compare against the Tuesday review baseline also reports `behind_by = 0`.
+
+**Week 3 Backend work is closed.** Scanner implementation/evaluator ownership remains with Dalal; Flutter ownership remains with Ahmad.
