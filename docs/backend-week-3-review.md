@@ -53,3 +53,29 @@ This adds API-boundary assertions only. It does not modify scanner evaluators, s
 ## Next step — Wednesday
 
 Proceed to Backend-owned API integration verification for `cookie_secure` and `cookie_httponly`: multiple cookies, missing attributes/evidence, and proof that cookie names/values do not appear in API responses or Backend logs. Scanner rule implementation and scanner-owned tests remain with Dalal.
+
+
+## Wednesday — Cookie API integration
+
+**Status:** Closed after full CI verification.
+
+Backend-owned additions in `tests/test_api.py` cover the API boundary while keeping scanner implementation and scanner-owned tests unchanged:
+
+- Multiple sanitized cookie observations are passed through the real report engine. The fixture includes one cookie without `Secure` and another without `HttpOnly`; the API preserves the resulting `warning` states and the aggregate count.
+- Unavailable cookie evidence remains `not_verified`; available evidence with zero observed cookies remains `skipped`. Neither state is reported as a clean pass.
+- Secret cookie names and values are asserted absent from the serialized API response and captured Backend logs.
+- The generic Cache Security finding may state that a `Set-Cookie` header was observed. This is header-presence metadata only; it does not expose cookie names or values.
+
+### Wednesday verification evidence
+
+- **Commit tested:** `1c7e70294678543946e6bcb3d4ca5bbe48f01cc0`
+- **Workflow:** Backend tests — [Run #62](https://github.com/dalalcoderwitch/CyberShield/actions/runs/43890022217)
+- **Job:** `pytest` — completed successfully
+- **Command:** `python -m pytest -q`
+- **Result:** `1027 passed in 5.64s`
+
+**Wednesday is closed.** No files under `security_scanner/` or `mobile/` were modified.
+
+## Next step — Thursday
+
+Proceed with Backend-owned API integration verification for `cookie_samesite`, including explicit `Strict`, `Lax`, and `None` states, invalid or conflicting attributes, missing evidence, and preservation of sanitized findings through Flask. Scanner implementation remains with Dalal.
