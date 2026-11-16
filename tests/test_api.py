@@ -607,6 +607,185 @@ def test_scan_api_preserves_week2_redirect_outcomes_without_following_destinatio
 
 
 @pytest.mark.parametrize(
+    "referrer_value,permissions_value,expected_referrer_status,expected_referrer_severity,expected_permissions_status,expected_permissions_severity",
+    [
+        (
+            "strict-origin-when-cross-origin",
+            "camera=()",
+            "passed",
+            "info",
+            "warning",
+            "info",
+        ),
+        (
+            None,
+            None,
+            "warning",
+            "low",
+            "warning",
+            "low",
+        ),
+        (
+            "unsafe-url",
+            "camera=(",
+            "warning",
+            "medium",
+            "warning",
+            "medium",
+        ),
+    ],
+)
+def test_scan_api_preserves_week2_header_evaluator_results(
+    monkeypatch,
+    referrer_value,
+    permissions_value,
+    expected_referrer_status,
+    expected_referrer_severity,
+    expected_permissions_status,
+    expected_permissions_severity,
+):
+    """Verify Week 2 header outcomes through Flask and the real report engine."""
+
+    from urllib.parse import urlsplit
+
+    from security_scanner.checks.result import CheckResult
+    from security_scanner.checks.disclosure_evidence import DisclosureEvidence
+
+    app = api_module.create_app()
+    client = app.test_client()
+    monkeypatch.setattr(
+        api_module,
+        "resolve_target",
+        lambda url, deadline=None: object(),
+    )
+
+    headers = {
+        "Strict-Transport-Security": "max-age=31536000",
+        "Content-Security-Policy": "default-src 'self'",
+        "X-Content-Type-Options": "nosniff",
+        "X-Frame-Options": "DENY",
+    }
+    if referrer_value is not None:
+        headers["Referrer-Policy"] = referrer_value
+    if permissions_value is not None:
+        headers["Permissions-Policy"] = permissions_value
+
+    def fake_get_response(
+        url,
+        resolved_target=None,
+        deadline=None,
+        tls_metadata=None,
+        redirect_dns_answers=None,
+        validated_target_capture=None,
+        cookie_evidence_capture=None,
+        access_evidence_capture=None,
+        disclosure_evidence_capture=None,
+    ):
+        if validated_target_capture is not None:
+            validated_target_capture["target"] = (
+                urlsplit(url),
+                "example.com",
+                ["93.184.216.34"],
+            )
+            validated_target_capture["takeover_hostname"] = "example.com"
+        if cookie_evidence_capture is not None:
+            cookie_evidence_capture.update(available=True, observations=())
+        if access_evidence_capture is not None:
+            access_evidence_capture.update(available=True, location_values=())
+        if disclosure_evidence_capture is not None:
+            disclosure_evidence_capture.clear()
+        return 200, headers, None
+
+    monkeypatch.setattr(
+        "security_scanner.report._safe_get_response",
+        fake_get_response,
+    )
+    monkeypatch.setattr(
+        "security_scanner.report._safe_http_redirect_probe",
+        lambda target, deadline=None, capture=None: (
+            capture.update(available=False, error="connection") or "connection"
+        ),
+    )
+    monkeypatch.setattr(
+        "security_scanner.report._safe_cors_preflight",
+        lambda target, deadline=None, capture=None: (
+            capture.update(available=False, error="connection") or "connection"
+        ),
+    )
+    monkeypatch.setattr(
+        "security_scanner.report._collect_disclosure_evidence",
+        lambda target, original_status, original_capture, deadline=None: DisclosureEvidence(),
+    )
+
+    def isolated_dns_result(check_id, title):
+        return CheckResult(
+            check_id=check_id,
+            title=title,
+            status="skipped",
+            severity="info",
+            confidence="low",
+            evidence="DNS evaluator is isolated in this header API test.",
+            explanation="No DNS conclusion is inferred from this fixture.",
+            recommendation="Use the dedicated DNS evaluator tests.",
+            limitations=("Controlled API test fixture.",),
+        )
+
+    monkeypatch.setattr(
+        "security_scanner.report.evaluate_spf_domain",
+        lambda domain, deadline=None: isolated_dns_result("dns_spf", "SPF"),
+    )
+    monkeypatch.setattr(
+        "security_scanner.report.evaluate_dmarc_domain",
+        lambda domain, deadline=None: isolated_dns_result("dns_dmarc", "DMARC"),
+    )
+    monkeypatch.setattr(
+        "security_scanner.report.evaluate_dnssec_domain",
+        lambda domain, deadline=None: isolated_dns_result("dnssec", "DNSSEC"),
+    )
+    monkeypatch.setattr(
+        "security_scanner.report.evaluate_takeover_domain",
+        lambda hostname, deadline=None: isolated_dns_result(
+            "subdomain_takeover_indicators",
+            "Passive takeover indicators",
+        ),
+    )
+
+    response = client.post(
+        "/api/v1/scan",
+        json={
+            "target_url": "https://example.com",
+            "authorization_confirmed": True,
+            "include_expanded_checks": True,
+        },
+    )
+
+    assert response.status_code == 200
+    report = response.get_json()
+    findings_by_id = {
+        finding["check_id"]: finding
+        for finding in report["findings"]
+    }
+
+    referrer = findings_by_id["header_referrer_policy"]
+    permissions = findings_by_id["header_permissions_policy"]
+    assert referrer["status"] == expected_referrer_status
+    assert referrer["severity"] == expected_referrer_severity
+    assert permissions["status"] == expected_permissions_status
+    assert permissions["severity"] == expected_permissions_severity
+    assert len(report["findings"]) == report["summary"]["total"] == 30
+
+    for status in ("passed", "warning", "not_verified", "error", "skipped"):
+        assert report["summary"][status] == sum(
+            finding["status"] == status
+            for finding in report["findings"]
+        )
+
+    # Header values are evaluated but are not echoed into API evidence.
+    assert referrer_value is None or referrer_value not in repr(referrer)
+    assert permissions_value is None or permissions_value not in repr(permissions)
+
+
+@pytest.mark.parametrize(
     "not_after,expected_status",
     [
         ("Jan 01 00:00:00 2099 GMT", "passed"),
