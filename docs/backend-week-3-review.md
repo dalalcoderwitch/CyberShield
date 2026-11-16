@@ -79,3 +79,30 @@ Backend-owned additions in `tests/test_api.py` cover the API boundary while keep
 ## Next step — Thursday
 
 Proceed with Backend-owned API integration verification for `cookie_samesite`, including explicit `Strict`, `Lax`, and `None` states, invalid or conflicting attributes, missing evidence, and preservation of sanitized findings through Flask. Scanner implementation remains with Dalal.
+
+
+## Thursday — SameSite API integration
+
+**Status:** Closed after full CI verification.
+
+Backend-owned parameterized API integration tests were added to `tests/test_api.py` using sanitized cookie observations passed through the real report engine:
+
+- `Strict` and `Lax` are preserved as `passed`.
+- `None` with `Secure` is preserved as `passed`; `None` without `Secure` is `warning`.
+- Missing or invalid SameSite values remain `warning`.
+- Ambiguous or conflicting SameSite values remain `not_verified` rather than being guessed.
+- The API preserves the independent `Secure` and `HttpOnly` results alongside the SameSite result.
+
+### Thursday verification evidence
+
+- **Commit tested:** `fc441fd4b5f6da000a7e20b111773d1c8a5bae96`
+- **Workflow:** Backend tests — [Run #64](https://github.com/dalalcoderwitch/CyberShield/actions/runs/43890356647)
+- **Job:** `pytest` — completed successfully
+- **Command:** `python -m pytest -q`
+- **Result:** `1034 passed in 5.90s`
+
+**Thursday is closed.** No files under `security_scanner/` or `mobile/` were modified.
+
+## Next step — Friday
+
+Proceed with Backend-owned API integration for `cors_misconfiguration`: preserve CORS evidence states, verify preflight-related findings are passed through without Flask-side reinterpretation, and ensure untrusted origin/header values do not leak into API output or logs. Scanner probe and evaluator implementation remain with Dalal.
