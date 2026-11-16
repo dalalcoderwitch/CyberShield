@@ -537,6 +537,81 @@ def test_passive_sql_report_reuses_original_sanitized_evidence(monkeypatch):
 
 
 
+def test_all_correlation_items_match_the_versioned_json_contract():
+    import json
+
+    from security_scanner.checks.correlation import (
+        CORRELATION_RULES_VERSION,
+        RULE_CATALOG,
+        correlate_findings,
+    )
+
+    contributor_ids = sorted({
+        check_id
+        for rule in RULE_CATALOG
+        for check_id in rule.contributors
+    })
+    findings = [
+        {
+            "check_id": check_id,
+            "status": "warning",
+            "severity": "medium",
+            "confidence": "high",
+        }
+        for check_id in contributor_ids
+    ]
+
+    correlations = correlate_findings(findings)
+
+    assert isinstance(CORRELATION_RULES_VERSION, str)
+    assert CORRELATION_RULES_VERSION
+    assert len(correlations) == len(RULE_CATALOG) == 7
+
+    expected_fields = {
+        "correlation_id",
+        "contributing_check_ids",
+        "severity",
+        "confidence",
+        "explanation",
+        "recommendation",
+        "rules_version",
+        "rule_version",
+        "limitations",
+    }
+
+    for correlation in correlations:
+        assert set(correlation) == expected_fields
+        for field in (
+            "correlation_id",
+            "severity",
+            "confidence",
+            "explanation",
+            "recommendation",
+            "rules_version",
+            "rule_version",
+        ):
+            assert isinstance(correlation[field], str)
+            assert correlation[field]
+
+        assert correlation["severity"] in {"low", "medium", "high"}
+        assert correlation["confidence"] in {"low", "medium", "high"}
+        assert correlation["rules_version"] == CORRELATION_RULES_VERSION
+
+        contributors = correlation["contributing_check_ids"]
+        assert isinstance(contributors, list)
+        assert contributors
+        assert all(isinstance(item, str) and item for item in contributors)
+        assert set(contributors).issubset(set(contributor_ids))
+
+        limitations = correlation["limitations"]
+        assert isinstance(limitations, list)
+        assert limitations
+        assert all(isinstance(item, str) and item for item in limitations)
+
+    # The exact payload emitted by the engine must survive JSON encoding.
+    assert json.loads(json.dumps(correlations)) == correlations
+
+
 def test_both_correlations_have_deterministic_order_and_json_roundtrip():
     import json
     from security_scanner.checks.correlation import safe_correlate_findings
