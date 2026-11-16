@@ -515,6 +515,109 @@ def test_scan_api_preserves_tls_expiry_outcome_and_other_week2_checks(
         )
 
 
+def test_scan_api_keeps_expanded_tls_checks_unverified_after_handshake_failure(
+    monkeypatch,
+):
+    """A failed TLS handshake must not produce passed metadata checks or drop the report."""
+
+    from security_scanner.checks.result import CheckResult
+
+    app = api_module.create_app()
+    client = app.test_client()
+    monkeypatch.setattr(
+        api_module,
+        "resolve_target",
+        lambda url, deadline=None: object(),
+    )
+
+    def fake_get_response(
+        url,
+        resolved_target=None,
+        deadline=None,
+        tls_metadata=None,
+        redirect_dns_answers=None,
+        validated_target_capture=None,
+        cookie_evidence_capture=None,
+        access_evidence_capture=None,
+        disclosure_evidence_capture=None,
+    ):
+        # No verified handshake means there is no trusted TLS metadata to evaluate.
+        return None, {}, "tls"
+
+    monkeypatch.setattr(
+        "security_scanner.report._safe_get_response",
+        fake_get_response,
+    )
+
+    def isolated_dns_result(check_id, title):
+        return CheckResult(
+            check_id=check_id,
+            title=title,
+            status="skipped",
+            severity="info",
+            confidence="low",
+            evidence="DNS evaluation is isolated in this TLS failure test.",
+            explanation="No DNS security conclusion is inferred.",
+            recommendation="Use the dedicated DNS evaluator tests.",
+            limitations=("Controlled API test fixture.",),
+        )
+
+    monkeypatch.setattr(
+        "security_scanner.report.evaluate_spf_domain",
+        lambda domain, deadline=None: isolated_dns_result("dns_spf", "SPF"),
+    )
+    monkeypatch.setattr(
+        "security_scanner.report.evaluate_dmarc_domain",
+        lambda domain, deadline=None: isolated_dns_result("dns_dmarc", "DMARC"),
+    )
+    monkeypatch.setattr(
+        "security_scanner.report.evaluate_dnssec_domain",
+        lambda domain, deadline=None: isolated_dns_result("dnssec", "DNSSEC"),
+    )
+    monkeypatch.setattr(
+        "security_scanner.report.evaluate_takeover_domain",
+        lambda hostname, deadline=None: isolated_dns_result(
+            "subdomain_takeover_indicators",
+            "Passive takeover indicators",
+        ),
+    )
+
+    response = client.post(
+        "/api/v1/scan",
+        json={
+            "target_url": "https://example.com",
+            "authorization_confirmed": True,
+            "include_expanded_checks": True,
+        },
+    )
+
+    assert response.status_code == 200
+    report = response.get_json()
+    findings_by_id = {
+        finding["check_id"]: finding
+        for finding in report["findings"]
+    }
+
+    assert report["status"] == "completed"
+    assert report["http_status"] is None
+    assert len(report["findings"]) == report["summary"]["total"] == 30
+    for check_id in (
+        "tls_certificate_expiry",
+        "tls_certificate_chain",
+        "tls_protocol_config",
+    ):
+        assert findings_by_id[check_id]["status"] == "not_verified"
+
+    assert findings_by_id["https_connection"]["status"] == "warning"
+    assert findings_by_id["header_referrer_policy"]["status"] == "not_verified"
+    assert findings_by_id["header_permissions_policy"]["status"] == "not_verified"
+    for status in ("passed", "warning", "not_verified", "error", "skipped"):
+        assert report["summary"][status] == sum(
+            finding["status"] == status
+            for finding in report["findings"]
+        )
+
+
 def test_scan_api_preserves_week2_findings_and_partial_results(monkeypatch):
     """The Flask boundary preserves all seven Week 2 checks and partial status."""
 
