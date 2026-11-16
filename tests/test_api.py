@@ -3001,6 +3001,127 @@ def test_scan_api_preserves_samesite_states_from_sanitized_cookie_evidence(
     )
 
 
+@pytest.mark.parametrize(
+    (
+        "probe_available",
+        "probe_status",
+        "cors_headers",
+        "expected_status",
+        "private_value",
+    ),
+    [
+        (
+            True,
+            204,
+            {
+                "access-control-allow-origin": ("*",),
+                "access-control-allow-methods": ("GET",),
+                "access-control-allow-headers": ("x-cybershield-audit",),
+                "access-control-allow-credentials": ("false",),
+                "vary": ("Origin",),
+            },
+            "warning",
+            None,
+        ),
+        (
+            True,
+            204,
+            {
+                "access-control-allow-origin": ("https://cybershield.invalid",),
+                "access-control-allow-methods": ("GET",),
+                "access-control-allow-headers": ("x-cybershield-audit",),
+                "access-control-allow-credentials": ("true",),
+            },
+            "warning",
+            None,
+        ),
+        (True, 204, {}, "passed", None),
+        (False, None, {}, "not_verified", "private-cors-header-secret"),
+        (
+            True,
+            204,
+            {
+                "access-control-allow-origin": (
+                    "https://attacker.example/private-origin-token",
+                ),
+            },
+            "passed",
+            "private-origin-token",
+        ),
+        (
+            True,
+            204,
+            {
+                "access-control-allow-origin": (
+                    "https://cybershield.invalid",
+                    "https://attacker.example/private-origin-token",
+                ),
+            },
+            "not_verified",
+            "private-origin-token",
+        ),
+    ],
+)
+def test_scan_api_preserves_sanitized_cors_probe_results(
+    monkeypatch,
+    caplog,
+    probe_available,
+    probe_status,
+    cors_headers,
+    expected_status,
+    private_value,
+):
+    """Flask returns CORS classifications, never raw untrusted preflight values."""
+    _patch_expanded_cookie_api_dependencies(
+        monkeypatch,
+        cookie_evidence_available=True,
+        cookie_observations=((True, True, "strict"),),
+        raw_set_cookie="session_cookie=redacted; Path=/",
+    )
+
+    def fake_cors_preflight(target, deadline=None, capture=None):
+        capture.update(
+            available=probe_available,
+            status=probe_status,
+            error=None if probe_available else "connection",
+        )
+        if probe_available:
+            capture["headers"] = cors_headers
+            return None
+        return "connection"
+
+    monkeypatch.setattr(
+        "security_scanner.report._safe_cors_preflight",
+        fake_cors_preflight,
+    )
+
+    app = api_module.create_app()
+    client = app.test_client()
+    response = client.post(
+        "/api/v1/scan",
+        json={
+            "target_url": "https://example.com",
+            "authorization_confirmed": True,
+            "include_expanded_checks": True,
+        },
+    )
+
+    assert response.status_code == 200
+    report = response.get_json()
+    cors_finding = next(
+        item for item in report["findings"]
+        if item["check_id"] == "cors_misconfiguration"
+    )
+    assert cors_finding["status"] == expected_status
+
+    response_text = response.get_data(as_text=True)
+    if private_value is not None:
+        assert private_value not in response_text
+        assert private_value not in caplog.text
+    assert "Access-Control-Allow-Origin" not in response_text
+    assert "access-control-allow-origin" not in response_text
+
+
 def test_scan_base_mode_omits_correlation_metadata(monkeypatch):
     """Base mode does not expose expanded-only correlation metadata."""
     app = api_module.create_app()
