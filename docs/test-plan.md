@@ -233,6 +233,41 @@ The following operational and deployment cases remain outside the proof provided
 
 These are deployment or broader security-validation items; they must not be represented as established merely because the automated suite passes.
 
+### 8.1 Flutter client integration status — reviewed 2026-11-16
+
+The current Flutter client sends `include_expanded_checks: true` in
+`mobile/lib/services/scan_api_service.dart`, and
+`mobile/test/services/scan_api_service_test.dart` asserts that request flag.
+The current client does not yet complete the expanded correlation contract:
+
+- `mobile/lib/models/scan_report.dart` does not model or retain the top-level
+  `correlations` array or `correlation_rules_version`; its `toJson()`
+  therefore cannot round-trip these fields.
+- `mobile/lib/screens/report_screen.dart` does not render top-level
+  correlation items. `Finding.relations` is a separate per-finding field and
+  is not a substitute for report-level correlations.
+- The service test's mock response has no correlation data. The model and
+  widget tests do not cover populated correlations, an empty correlation list
+  with a retained rules version, or correlation rendering.
+- The repository currently has a Backend-only GitHub Actions workflow; no
+  Flutter workflow is configured. Flutter test and analyzer results have not
+  been recorded in this verification run.
+
+For full-team Week 1 acceptance, the mobile owner must add a typed correlation
+model for the nine-field item contract
+(`correlation_id`, `contributing_check_ids`, `severity`, `confidence`,
+`explanation`, `recommendation`, `rules_version`, `rule_version`, and
+`limitations`), retain the report-level rules version
+(`2.0.0` in the current backend), display correlations separately from
+findings, and add model/service/widget coverage for both populated and empty
+lists. Then run `flutter test` and `flutter analyze` on the final mobile
+commit (preferably through a Flutter CI job). Do not count correlation items
+as findings or summary counters.
+
+The Backend/API portion is complete and has a passing GitHub Actions run.
+The full-team Week 1 milestone remains open until the mobile acceptance items
+above are implemented and verified.
+
 ## 9. Test Execution
 
 Run the complete automated suite from the project root using:
@@ -244,9 +279,9 @@ List collected tests without executing them using:
 .\.venv\Scripts\python.exe -m pytest --collect-only -q
 
 The full suite was executed through GitHub Actions on 2026-11-16
-at implementation commit `5c32b096324d5ba8010a6ef6298a7e7ffac62a24`.
-GitHub Actions run [#30](https://github.com/dalalcoderwitch/CyberShield/actions/runs/43875434967)
-completed successfully with `1009 passed in 6.02s`. This run includes
+at implementation commit `104e843cbb016e9a1739aeb76de35f23e9db4265`.
+GitHub Actions run [#31](https://github.com/dalalcoderwitch/CyberShield/actions/runs/43875650899)
+completed successfully with `1009 passed in 6.84s`. This run includes
 the Flask-to-report-engine correlation integration regression, the
 seven-rule correlation JSON schema/serialization regression, exact
 Flask request-body boundary tests, bounded chunked-response sampling,
@@ -261,7 +296,7 @@ A test collection count alone does not indicate that the tests passed. Record th
 
 ## 10. Current Acceptance Criteria
 
-- The latest recorded implementation run completed with 1009 passed in 6.02 seconds on implementation commit `5c32b096324d5ba8010a6ef6298a7e7ffac62a24` (GitHub Actions run [#30](https://github.com/dalalcoderwitch/CyberShield/actions/runs/43875434967)); later code changes require a new successful run.
+- The latest recorded implementation run completed with 1009 passed in 6.84 seconds on implementation commit `104e843cbb016e9a1739aeb76de35f23e9db4265` (GitHub Actions run [#31](https://github.com/dalalcoderwitch/CyberShield/actions/runs/43875650899)); later code changes require a new successful run.
 - The test count must be updated whenever tests are added or removed.
 - All current automated tests pass.
 - The test plan distinguishes mocked behavior from real network verification.
