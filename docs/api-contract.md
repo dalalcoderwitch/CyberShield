@@ -4,7 +4,7 @@
 
 **Scope:** Project 1 — Website Security Assessment
 
-**Status:** Draft — pending implementation verification and team approval
+**Status:** Draft — implementation checked against `main` on 2026-11-16; pending team approval
 
 ## 1. Purpose
 
@@ -349,7 +349,10 @@ field.
 
 - API `200`: a report was returned.
 - API `400`: request data is invalid.
-- API `403`: authorization confirmation or target policy prevents scanning.\n- API `502`: DNS resolution failed or returned no usable addresses.\n- API `503`: scan capacity or DNS lookup capacity is exhausted.\n- API `504`: the total scan deadline expired, or the DNS lookup wait limit expired (`DNS_TIMEOUT`).
+- API `403`: authorization confirmation or target policy prevents scanning.
+- API `502`: DNS resolution failed or returned no usable addresses.
+- API `503`: scan capacity or DNS lookup capacity is exhausted.
+- API `504`: the total scan deadline expired, or the DNS lookup wait limit expired (`DNS_TIMEOUT`).
 - API `405`: the HTTP method is not supported for the requested endpoint.
 - API `413`: the request body exceeds the configured size limit.
 - API `429`: the source IP exceeded the in-process request rate limit; the request was rejected before target resolution and scanning.
