@@ -391,6 +391,229 @@ def test_scan_endpoint_returns_contract_compatible_report(monkeypatch):
         ("not-a-valid-asn1-date", "not_verified"),
     ],
 )
+@pytest.mark.parametrize(
+    "probe_status,location,dns_addresses,expected_http_status,expected_safety_status,expected_dns_calls",
+    [
+        (
+            302,
+            "https://redirect.example/secure",
+            ("93.184.216.34",),
+            "passed",
+            "passed",
+            1,
+        ),
+        (
+            302,
+            "https://redirect.example/secure",
+            ("93.184.216.34", "10.0.0.8"),
+            "passed",
+            "warning",
+            1,
+        ),
+        (
+            302,
+            "https://user:secret@redirect.example/secure",
+            ("93.184.216.34",),
+            "warning",
+            "warning",
+            0,
+        ),
+        (
+            200,
+            None,
+            ("93.184.216.34",),
+            "warning",
+            "skipped",
+            0,
+        ),
+    ],
+)
+def test_scan_api_preserves_week2_redirect_outcomes_without_following_destination(
+    monkeypatch,
+    probe_status,
+    location,
+    dns_addresses,
+    expected_http_status,
+    expected_safety_status,
+    expected_dns_calls,
+):
+    """Exercise redirect evidence through Flask without connecting to its destination."""
+
+    from urllib.parse import urlsplit
+
+    from security_scanner.checks.result import CheckResult
+
+    app = api_module.create_app()
+    client = app.test_client()
+    monkeypatch.setattr(
+        api_module,
+        "resolve_target",
+        lambda url, deadline=None: object(),
+    )
+
+    observed = {
+        "primary_request_urls": [],
+        "http_probe_targets": [],
+        "redirect_dns_candidates": [],
+        "redirect_dns_calls": [],
+    }
+    response_headers = {
+        "Strict-Transport-Security": "max-age=31536000",
+        "Content-Security-Policy": "default-src 'self'",
+        "X-Content-Type-Options": "nosniff",
+        "X-Frame-Options": "DENY",
+        "Referrer-Policy": "strict-origin-when-cross-origin",
+        "Permissions-Policy": "camera=()",
+    }
+
+    def fake_get_response(
+        url,
+        resolved_target=None,
+        deadline=None,
+        tls_metadata=None,
+        redirect_dns_answers=None,
+        validated_target_capture=None,
+        cookie_evidence_capture=None,
+        access_evidence_capture=None,
+        disclosure_evidence_capture=None,
+    ):
+        observed["primary_request_urls"].append(url)
+        if validated_target_capture is not None:
+            validated_target_capture["target"] = (
+                urlsplit(url),
+                "example.com",
+                ["93.184.216.34"],
+            )
+            validated_target_capture["takeover_hostname"] = "example.com"
+        if tls_metadata is not None:
+            tls_metadata.update(
+                not_before="Jan 01 00:00:00 2020 GMT",
+                not_after="Jan 01 00:00:00 2099 GMT",
+                chain_available=True,
+                version="TLSv1.3",
+                cipher="TLS_AES_128_GCM_SHA256",
+            )
+        if cookie_evidence_capture is not None:
+            cookie_evidence_capture.update(available=True, observations=())
+        if access_evidence_capture is not None:
+            access_evidence_capture.update(available=True, location_values=())
+        if disclosure_evidence_capture is not None:
+            disclosure_evidence_capture.clear()
+        return 200, response_headers, None
+
+    monkeypatch.setattr(
+        "security_scanner.report._safe_get_response",
+        fake_get_response,
+    )
+
+    def fake_http_probe(target, deadline=None, capture=None):
+        observed["http_probe_targets"].append(target)
+        if capture is not None:
+            capture.update(
+                status=probe_status,
+                location=location,
+                request_url="http://93.184.216.34:80/",
+            )
+        return None
+
+    monkeypatch.setattr(
+        "security_scanner.report._safe_http_redirect_probe",
+        fake_http_probe,
+    )
+
+    def fake_resolve_redirect(destination, deadline=None):
+        parsed = urlsplit(destination)
+        # Invalid locations are rejected before any destination DNS lookup.
+        if (
+            parsed.scheme.lower() != "https"
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.port not in (None, 443)
+        ):
+            return None
+        observed["redirect_dns_candidates"].append(destination)
+        observed["redirect_dns_calls"].append(destination)
+        return dns_addresses
+
+    monkeypatch.setattr(
+        "security_scanner.report._resolve_redirect_location_addresses",
+        fake_resolve_redirect,
+    )
+
+    def isolated_dns_result(check_id, title):
+        return CheckResult(
+            check_id=check_id,
+            title=title,
+            status="skipped",
+            severity="info",
+            confidence="low",
+            evidence="DNS evaluator is isolated in this redirect API test.",
+            explanation="No DNS policy conclusion is inferred from this fixture.",
+            recommendation="Use dedicated DNS evaluator tests.",
+            limitations=("Controlled API test fixture.",),
+        )
+
+    monkeypatch.setattr(
+        "security_scanner.report.evaluate_spf_domain",
+        lambda domain, deadline=None: isolated_dns_result("dns_spf", "SPF"),
+    )
+    monkeypatch.setattr(
+        "security_scanner.report.evaluate_dmarc_domain",
+        lambda domain, deadline=None: isolated_dns_result("dns_dmarc", "DMARC"),
+    )
+    monkeypatch.setattr(
+        "security_scanner.report.evaluate_dnssec_domain",
+        lambda domain, deadline=None: isolated_dns_result("dnssec", "DNSSEC"),
+    )
+    monkeypatch.setattr(
+        "security_scanner.report.evaluate_takeover_domain",
+        lambda hostname, deadline=None: isolated_dns_result(
+            "subdomain_takeover_indicators",
+            "Passive takeover indicators",
+        ),
+    )
+
+    response = client.post(
+        "/api/v1/scan",
+        json={
+            "target_url": "https://example.com",
+            "authorization_confirmed": True,
+            "include_expanded_checks": True,
+        },
+    )
+
+    assert response.status_code == 200
+    report = response.get_json()
+    findings_by_id = {
+        finding["check_id"]: finding
+        for finding in report["findings"]
+    }
+
+    assert findings_by_id["http_to_https_redirect"]["status"] == expected_http_status
+    assert findings_by_id["redirect_destination_safety"]["status"] == expected_safety_status
+    assert len(report["findings"]) == report["summary"]["total"] == 30
+    assert len(observed["primary_request_urls"]) == 1
+    assert observed["primary_request_urls"] == ["https://example.com"]
+    assert len(observed["http_probe_targets"]) == 1
+    assert len(observed["redirect_dns_calls"]) == expected_dns_calls
+    assert all(
+        "user:secret@" not in destination
+        for destination in observed["redirect_dns_candidates"]
+    )
+    assert "10.0.0.8" not in repr(report)
+
+    # The destination is classified from Location and bounded DNS evidence;
+    # no second HTTPS request to that destination is created or followed.
+    assert observed["primary_request_urls"] == ["https://example.com"]
+
+    for status in ("passed", "warning", "not_verified", "error", "skipped"):
+        assert report["summary"][status] == sum(
+            finding["status"] == status
+            for finding in report["findings"]
+        )
+
+
 def test_scan_api_preserves_tls_expiry_outcome_and_other_week2_checks(
     monkeypatch,
     not_after,
