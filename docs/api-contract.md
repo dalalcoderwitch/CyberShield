@@ -1,10 +1,10 @@
 # CyberShield — API Contract
 
-**Version:** Draft 1.3 (proposal)
+**Version:** 1.3
 
 **Scope:** Project 1 — Website Security Assessment
 
-**Status:** Draft — expanded-report metadata proposal checked against `main` on 2026-11-16; pending Dalal and Ahmad approval
+**Status:** Backend contract baseline — implementation and API tests checked against `main` on 2026-11-16; Flutter adoption and end-to-end integration remain pending
 
 ## 1. Purpose
 
@@ -18,8 +18,9 @@ Field names, field types, status meanings, and error codes must remain
 consistent across the API implementation, automated tests, and Flutter
 data models.
 
-This contract must not be considered finalized until it has been checked
-against the current implementation and reviewed by the team.
+This document defines the current Backend response contract. Cross-client
+adoption still requires the Flutter model and UI to implement the documented
+expanded-report metadata, followed by an end-to-end integration check.
 
 ## 2. Local Development
 
@@ -233,7 +234,7 @@ Every status count must match the findings actually returned.
 The illustrative report above has five findings: one `passed` and four
 `warning`. Therefore, the summary counts add up to five.
 
-### Proposed expanded-report metadata (pending team approval)
+### Expanded-report metadata
 
 When `include_expanded_checks` is `true`, the report includes both
 `correlations` and `correlation_rules_version`. When the option is omitted
@@ -283,9 +284,11 @@ Illustrative expanded-only fields:
 }
 ```
 
-This proposal reflects the current scanner output and remains subject to
-review by the scanner and Flutter owners before it becomes a finalized
-cross-team contract.
+This contract reflects the current scanner output and fixes the Flask
+response behavior for version 1.3. Scanner rule changes remain owned by the
+scanner module; Flutter must preserve these fields when parsing and
+serializing expanded reports. Any incompatible schema change requires a
+coordinated contract revision.
 
 ## 6. Finding Schema
 
