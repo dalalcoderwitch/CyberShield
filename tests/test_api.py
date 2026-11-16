@@ -1638,6 +1638,130 @@ def test_scan_expanded_report_keeps_empty_correlations_and_version(
     assert response.json["correlation_rules_version"] == "2.0.0"
 
 
+def test_scan_api_returns_correlation_generated_by_real_report_engine(
+    monkeypatch,
+):
+    """Exercise Flask -> backend adapter -> real report/correlation engine."""
+
+    from security_scanner.checks.result import CheckResult
+
+    app = api_module.create_app()
+    client = app.test_client()
+
+    monkeypatch.setattr(
+        api_module,
+        "resolve_target",
+        lambda url, deadline=None: object(),
+    )
+
+    headers = {
+        "Strict-Transport-Security": "max-age=31536000",
+        "Content-Security-Policy": "default-src 'self'",
+        "X-Content-Type-Options": "nosniff",
+        "X-Frame-Options": "DENY",
+    }
+
+    def fake_get_response(
+        url,
+        resolved_target=None,
+        deadline=None,
+        tls_metadata=None,
+        redirect_dns_answers=None,
+        validated_target_capture=None,
+        cookie_evidence_capture=None,
+        access_evidence_capture=None,
+        disclosure_evidence_capture=None,
+    ):
+        # Simulate parsed attributes only; raw cookie names/values are never
+        # passed into the report engine or its findings.
+        if cookie_evidence_capture is not None:
+            cookie_evidence_capture.update(
+                available=True,
+                observations=((False, False, "missing"),),
+            )
+        if access_evidence_capture is not None:
+            access_evidence_capture.update(
+                available=True,
+                location_values=(),
+            )
+        if disclosure_evidence_capture is not None:
+            disclosure_evidence_capture.clear()
+        return 200, headers, None
+
+    monkeypatch.setattr(
+        "security_scanner.report._safe_get_response",
+        fake_get_response,
+    )
+
+    def dns_result(check_id, title):
+        return CheckResult(
+            check_id=check_id,
+            title=title,
+            status="skipped",
+            severity="info",
+            confidence="low",
+            evidence="DNS evaluation was isolated in this API integration test.",
+            explanation="No DNS security conclusion is inferred by this fixture.",
+            recommendation="Run the dedicated DNS evaluator tests.",
+            limitations=("This result is specific to the isolated test fixture.",),
+        )
+
+    monkeypatch.setattr(
+        "security_scanner.report.evaluate_spf_domain",
+        lambda domain, deadline=None: dns_result("dns_spf", "SPF"),
+    )
+    monkeypatch.setattr(
+        "security_scanner.report.evaluate_dmarc_domain",
+        lambda domain, deadline=None: dns_result("dns_dmarc", "DMARC"),
+    )
+    monkeypatch.setattr(
+        "security_scanner.report.evaluate_dnssec_domain",
+        lambda domain, deadline=None: dns_result("dnssec", "DNSSEC"),
+    )
+    monkeypatch.setattr(
+        "security_scanner.report.evaluate_takeover_domain",
+        lambda hostname, deadline=None: dns_result(
+            "subdomain_takeover_indicators",
+            "Passive takeover indicators",
+        ),
+    )
+
+    response = client.post(
+        "/api/v1/scan",
+        json={
+            "target_url": "https://example.com",
+            "authorization_confirmed": True,
+            "include_expanded_checks": True,
+        },
+    )
+
+    assert response.status_code == 200
+    report = response.get_json()
+
+    assert report["status"] == "completed"
+    assert len(report["findings"]) == report["summary"]["total"]
+    assert report["summary"]["total"] == 30
+
+    findings_by_id = {
+        finding["check_id"]: finding
+        for finding in report["findings"]
+    }
+    assert findings_by_id["cookie_secure"]["status"] == "warning"
+    assert findings_by_id["cookie_httponly"]["status"] == "warning"
+
+    assert report["correlation_rules_version"] == "2.0.0"
+    assert len(report["correlations"]) == 1
+    correlation = report["correlations"][0]
+    assert correlation["correlation_id"] == "cookie_defense_gaps"
+    assert correlation["contributing_check_ids"] == [
+        "cookie_secure",
+        "cookie_httponly",
+    ]
+    assert correlation["rules_version"] == report["correlation_rules_version"]
+    assert "limitations" in correlation
+    assert report["summary"]["total"] == len(report["findings"])
+
+
 def test_scan_base_mode_omits_correlation_metadata(monkeypatch):
     """Base mode does not expose expanded-only correlation metadata."""
     app = api_module.create_app()
