@@ -2947,6 +2947,60 @@ def test_scan_api_preserves_cookie_status_when_evidence_is_missing_or_empty(
     assert "private_cookie_value" not in response.get_data(as_text=True)
 
 
+@pytest.mark.parametrize(
+    ("observations", "expected_status"),
+    [
+        (((True, True, "strict"), (True, True, "lax")), "passed"),
+        (((True, True, "none"),), "passed"),
+        (((False, True, "none"),), "warning"),
+        (((True, True, "missing"),), "warning"),
+        (((True, True, "invalid"),), "warning"),
+        (((True, True, "ambiguous"),), "not_verified"),
+        (
+            ((True, True, "strict"), (True, True, "ambiguous")),
+            "not_verified",
+        ),
+    ],
+)
+def test_scan_api_preserves_samesite_states_from_sanitized_cookie_evidence(
+    monkeypatch,
+    observations,
+    expected_status,
+):
+    """Flask preserves SameSite outcomes for explicit, invalid and conflicting attributes."""
+    _patch_expanded_cookie_api_dependencies(
+        monkeypatch,
+        cookie_evidence_available=True,
+        cookie_observations=observations,
+        raw_set_cookie="session_cookie=redacted; Path=/",
+    )
+
+    app = api_module.create_app()
+    client = app.test_client()
+    response = client.post(
+        "/api/v1/scan",
+        json={
+            "target_url": "https://example.com",
+            "authorization_confirmed": True,
+            "include_expanded_checks": True,
+        },
+    )
+
+    assert response.status_code == 200
+    report = response.get_json()
+    findings = {
+        item["check_id"]: item
+        for item in report["findings"]
+    }
+    assert findings["cookie_samesite"]["status"] == expected_status
+    assert findings["cookie_secure"]["status"] == (
+        "warning" if any(not item[0] for item in observations) else "passed"
+    )
+    assert findings["cookie_httponly"]["status"] == (
+        "warning" if any(not item[1] for item in observations) else "passed"
+    )
+
+
 def test_scan_base_mode_omits_correlation_metadata(monkeypatch):
     """Base mode does not expose expanded-only correlation metadata."""
     app = api_module.create_app()
