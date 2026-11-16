@@ -137,6 +137,8 @@ The API regression `test_scan_api_keeps_expanded_tls_checks_unverified_after_han
 
 The parameterized Flask/report integration regression `test_scan_api_preserves_week2_redirect_outcomes_without_following_destination` checks a valid HTTPS redirect, mixed public/private destination DNS answers, a credential-bearing Location, and a non-redirect response. It verifies the separate `http_to_https_redirect` and `redirect_destination_safety` outcomes, confirms no destination DNS lookup is attempted for malformed credential-bearing Location, and ensures the destination is not followed by a second HTTPS request.
 
+The parameterized API regression `test_scan_api_preserves_week2_header_evaluator_results` runs the real report engine through Flask with strict, missing, and unsafe/malformed values for Referrer-Policy and Permissions-Policy. It checks status/severity preservation, summary consistency, and that raw header values are not echoed into report evidence.
+
 ### 6.2 Report Tests — tests/test_report.py
 
 Representative report tests include:
@@ -290,12 +292,12 @@ List collected tests without executing them using:
 .\.venv\Scripts\python.exe -m pytest --collect-only -q
 
 The full suite was executed through GitHub Actions on 2026-11-16
-at implementation commit `25202f77428a2bc1b1be883c2ea9f14088309fe0`.
-GitHub Actions run [#47](https://github.com/dalalcoderwitch/CyberShield/actions/runs/43883415327)
-completed successfully with `1018 passed in 5.87s`. This run includes
+at implementation commit `b9069ecc9e4cec14a9cb0a04530c2430a6c900b2`.
+GitHub Actions run [#49](https://github.com/dalalcoderwitch/CyberShield/actions/runs/43883790475)
+completed successfully with `1021 passed in 5.04s`. This run includes
 the Week 2 Flask pass-through and real report-engine assertions, certificate
-expiry and handshake-failure outcomes, and four redirect policy scenarios
-without following a redirect destination. This run includes
+expiry and handshake-failure outcomes, four redirect policy scenarios without
+following the destination, and three Referrer-Policy/Permissions-Policy cases. This run includes
 the Flask-to-report-engine correlation integration regression, the
 seven-rule correlation JSON schema/serialization regression, exact
 Flask request-body boundary tests, bounded chunked-response sampling,
@@ -310,7 +312,7 @@ A test collection count alone does not indicate that the tests passed. Record th
 
 ## 10. Current Acceptance Criteria
 
-- The latest recorded implementation run completed with 1018 passed in 5.87 seconds on implementation commit `25202f77428a2bc1b1be883c2ea9f14088309fe0` (GitHub Actions run [#47](https://github.com/dalalcoderwitch/CyberShield/actions/runs/43883415327)); later code changes require a new successful run.
+- The latest recorded implementation run completed with 1021 passed in 5.04 seconds on implementation commit `b9069ecc9e4cec14a9cb0a04530c2430a6c900b2` (GitHub Actions run [#49](https://github.com/dalalcoderwitch/CyberShield/actions/runs/43883790475)); later code changes require a new successful run.
 - The test count must be updated whenever tests are added or removed.
 - All current automated tests pass.
 - The test plan distinguishes mocked behavior from real network verification.
