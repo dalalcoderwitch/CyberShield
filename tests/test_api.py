@@ -1989,6 +1989,35 @@ def test_scan_api_returns_correlation_generated_by_real_report_engine(
         finding["check_id"]: finding
         for finding in report["findings"]
     }
+    week2_check_ids = {
+        "tls_certificate_expiry",
+        "tls_certificate_chain",
+        "tls_protocol_config",
+        "http_to_https_redirect",
+        "redirect_destination_safety",
+        "header_referrer_policy",
+        "header_permissions_policy",
+    }
+    assert week2_check_ids.issubset(findings_by_id)
+    required_finding_fields = {
+        "check_id",
+        "title",
+        "status",
+        "severity",
+        "confidence",
+        "evidence",
+        "explanation",
+        "recommendation",
+        "limitations",
+    }
+    for check_id in week2_check_ids:
+        finding = findings_by_id[check_id]
+        assert required_finding_fields.issubset(finding)
+        assert finding["status"] in {
+            "passed", "warning", "not_verified", "error", "skipped"
+        }
+        assert isinstance(finding["limitations"], list)
+
     assert findings_by_id["cookie_secure"]["status"] == "warning"
     assert findings_by_id["cookie_httponly"]["status"] == "warning"
 
