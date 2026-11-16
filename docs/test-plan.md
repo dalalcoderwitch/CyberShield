@@ -113,7 +113,7 @@ The automated test suite is organized into three files.
 
 ### 6.1 API Tests — tests/test_api.py
 
-Six tests are currently collected:
+Representative API tests include:
 
 1. test_health_endpoint
 2. test_scan_rejects_invalid_json
@@ -122,11 +122,16 @@ Six tests are currently collected:
 5. test_scan_returns_report
 6. test_scan_hides_internal_error
 
-These tests cover the health endpoint, request validation, authorization confirmation, target restrictions, the successful report response, and the hiding of internal errors.
+These tests cover the health endpoint, request validation, authorization confirmation, target restrictions, the successful report response, and the hiding of internal errors. Additional API regression coverage includes:
+
+- `test_scan_maps_detailed_resolution_errors_to_api_responses`, parameterized across the six detailed resolver outcomes.
+- `test_scan_passes_detailed_resolved_target_to_engine`, verifying that the same validated target is passed to the engine without a second DNS lookup.
+
+The API test file also covers request-size and method errors, rate limiting, scan capacity, deadlines, CORS, and safe error handling.
 
 ### 6.2 Report Tests — tests/test_report.py
 
-Three tests are currently collected:
+Representative report tests include:
 
 1. test_scan_target_returns_complete_report
 2. test_failed_connection_does_not_mark_headers_passed
@@ -136,7 +141,7 @@ These tests cover the report schema, failure behavior, and consistency between f
 
 ### 6.3 Scanner Tests — tests/test_scanner.py
 
-Fourteen tests are currently collected:
+Representative scanner tests include:
 
 1. test_http_url_warns
 2. test_missing_headers_warn
@@ -212,13 +217,18 @@ List collected tests without executing them using:
 
 .\.venv\Scripts\python.exe -m pytest --collect-only -q
 
-The current baseline is 102 tests across the three test files. The latest full execution completed with 102 passed.
+The full suite was executed through GitHub Actions on 2026-11-16
+at commit `f69fa74414547eab6300d42a229cd995458ac4ce` using
+Python 3.14.10 on Ubuntu 26.04. The run completed with
+`997 passed in 4.38s`. This is an executed result, not a
+test-collection estimate. Re-run the workflow after subsequent
+code changes and update this record with the newest run.
 
 A test collection count alone does not indicate that the tests passed. Record the actual execution result separately.
 
 ## 10. Current Acceptance Criteria
 
-- The current automated suite contains 102 tests; the latest full execution completed with 102 passed.
+- The latest recorded full execution completed with 997 passed in 4.38 seconds on commit `f69fa74414547eab6300d42a229cd995458ac4ce`; later code changes require a new successful run.
 - The test count must be updated whenever tests are added or removed.
 - All current automated tests pass.
 - The test plan distinguishes mocked behavior from real network verification.
@@ -228,6 +238,6 @@ A test collection count alone does not indicate that the tests passed. Record th
 - The report summary matches the statuses of its findings.
 - Rejected targets do not trigger outbound HTTP requests.
 
-The 23-test baseline is not proof that every security requirement has been satisfied.
+Passing the automated suite is not proof that every security requirement has been satisfied; controlled real-network and deployment verification remain separate requirements.
 
 CyberShield Project 1 provides a limited preliminary assessment of selected HTTPS and HTTP security indicators. It is not a full penetration test, a security certification, or a guarantee that a website is secure.
