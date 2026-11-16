@@ -208,6 +208,29 @@ the scanner may return additional findings from the implemented
 expanded checks. The actual number of findings depends on the selected
 scan mode and the checks returned by the engine.
 
+### Week 2 TLS, Redirect, and Header Findings
+
+Expanded mode includes the following seven Week 2 findings in the same
+`findings` array and with the same nine-field finding contract defined above:
+
+| Group | Check ID |
+|---|---|
+| TLS certificate | `tls_certificate_expiry` |
+| TLS certificate | `tls_certificate_chain` |
+| TLS negotiation | `tls_protocol_config` |
+| HTTP transport | `http_to_https_redirect` |
+| Redirect validation | `redirect_destination_safety` |
+| Response header | `header_referrer_policy` |
+| Response header | `header_permissions_policy` |
+
+These findings are returned by the report engine; Flask must pass their
+`status`, `severity`, `confidence`, evidence, explanation, recommendation,
+and limitations through without recalculating or reclassifying them. An
+individual result of `error` or `not_verified` must remain attached to that
+finding and must not cause the other findings or the report to be discarded.
+The summary counts findings by their original statuses; these seven checks
+are not separate from the `findings` array.
+
 ### Report field semantics
 
 | Field | Meaning |
