@@ -100,7 +100,7 @@ void main() {
   });
 
   test('unknown check is retained and categorized under other', () {
-    final groups = groupFindings([Finding.fromJson(fakeFinding('dns_spf'))]);
+    final groups = groupFindings([Finding.fromJson(fakeFinding('unknown_check_for_test'))]);
     expect(groups.keys.single.id, 'other');
   });
 
