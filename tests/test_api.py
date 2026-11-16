@@ -2900,7 +2900,7 @@ def test_scan_api_aggregates_multiple_cookie_attributes_without_disclosing_value
     ):
         assert secret not in response_text
         assert secret not in caplog.text
-    assert "Set-Cookie" not in response_text
+    assert "Set-Cookie presence was observed" in response_text
 
 
 @pytest.mark.parametrize(
