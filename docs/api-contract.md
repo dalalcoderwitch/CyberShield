@@ -199,7 +199,11 @@ The JSON above is an illustrative schema example. Its timestamps, evidence,
 and finding results are not a fixed result for every target. The actual
 report must reflect observed evidence.
 
-A complete report contains five findings, one for each agreed check.
+When `include_expanded_checks` is omitted or `false`, the base
+report contains the five foundational findings. When it is `true`,
+the scanner may return additional findings from the implemented
+expanded checks. The actual number of findings depends on the selected
+scan mode and the checks returned by the engine.
 
 ### Report field semantics
 
@@ -212,7 +216,7 @@ A complete report contains five findings, one for each agreed check.
 | `engine_version` | Scanner report version |
 | `http_status` | Target response status code, or `null` if no response was obtained |
 | `summary` | Counts of findings by status |
-| `findings` | The five individual check results |
+| `findings` | The individual check results returned by the selected scan mode |
 | `limitations` | Report-level limitations |
 | `notice` | General assessment disclaimer |
 
@@ -262,7 +266,7 @@ must not be used interchangeably.
 
 ## 7. Stable Check Identifiers
 
-Project 1 defines exactly five check identifiers:
+Project 1 defines five foundational check identifiers. Expanded scan\nmode may return additional identifiers implemented by the scanner:
 
 | Identifier | Check |
 |---|---|
@@ -317,8 +321,8 @@ avoid exposing internal exception details.
 | `403` | `AUTHORIZATION_REQUIRED` | Authorization confirmation is false |
 | `403` | `TARGET_NOT_ALLOWED` | The target is rejected by the target security policy |
 | `502` | `DNS_RESOLUTION_FAILED` | DNS resolution failed or returned no usable addresses |
-| `504` | `DNS_TIMEOUT` | The DNS caller wait limit expired before resolution completed |
 | `503` | `DNS_CAPACITY_EXCEEDED` | No DNS lookup slot was available |
+| `504` | `DNS_TIMEOUT` | The DNS caller wait limit expired before resolution completed |
 | `405` | `METHOD_NOT_ALLOWED` | The HTTP method is not supported for this endpoint |
 | `413` | `REQUEST_TOO_LARGE` | The request exceeds the configured size limit |
 | `429` | `RATE_LIMIT_EXCEEDED` | The source IP exceeded the in-process scan rate limit or the source tracking table is full |
