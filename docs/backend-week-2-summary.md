@@ -52,7 +52,7 @@ The Backend additions verify that the API boundary preserves the report-engine o
 
 ## 5. Verification
 
-GitHub Actions run [#52](https://github.com/dalalcoderwitch/CyberShield/actions/runs/43884580764) completed successfully on 2026-11-16 with **1024 passed in 6.14s**.
+GitHub Actions run [#54](https://github.com/dalalcoderwitch/CyberShield/actions/runs/43885027429) completed successfully on 2026-11-16 with **1024 passed in 6.71s** at commit `5b58acfabd6888bdc999c8510ac69aa730e43bed`.
 
 This is automated Backend CI evidence. The redirect and TLS API tests use controlled fixtures for external HTTP/DNS dependencies; they are not a claim of exhaustive public-network or production-deployment verification.
 
