@@ -5,7 +5,8 @@ from flask import Flask, jsonify, request
 from flask_cors import CORS
 
 from backend.scanner import scan_target
-from security_scanner.scanner import resolve_target
+# Use the detailed resolver so DNS failures remain distinguishable at the API layer.
+from security_scanner.scanner import resolve_target_with_status as resolve_target
 
 
 # حدود أولية للتطوير، وتحتاج إلى مراجعة قبل النشر.
@@ -175,25 +176,75 @@ def create_app():
                 time.monotonic() + _SCAN_DEADLINE_SECONDS
             )
 
-            # التحقق من الرابط وحل DNS مرة واحدة.
-            resolved_target = resolve_target(
+            # التحقق من الرابط وحل DNS مرة واحدة مع الاحتفاظ بسبب الفشل.
+            resolution_result = resolve_target(
                 target_url,
                 deadline=deadline,
             )
 
+            # التوافق مع الاختبارات أو أي محول قديم يعيد target/None،
+            # بينما الواجهة الفعلية الجديدة تعيد (target, status).
+            if (
+                isinstance(resolution_result, tuple)
+                and len(resolution_result) == 2
+            ):
+                resolved_target, resolution_error = resolution_result
+            else:
+                resolved_target = resolution_result
+                resolution_error = (
+                    None if resolved_target is not None else "not_allowed"
+                )
+
             if time.monotonic() >= deadline:
                 return scan_timeout_response()
 
-            if resolved_target is None:
+            if resolution_error in ("invalid", "not_allowed") or (
+                resolution_error is None and resolved_target is None
+            ):
                 return jsonify({
                     "error": {
                         "code": "TARGET_NOT_ALLOWED",
-                        "message": (
-                            "الرابط غير مسموح بفحصه "
-                            "أو تعذر التحقق من عنوانه."
-                        ),
+                        "message": "الرابط غير مسموح بفحصه.",
                     }
                 }), 403
+
+            if resolution_error == "dns_error":
+                return jsonify({
+                    "error": {
+                        "code": "DNS_RESOLUTION_FAILED",
+                        "message": "تعذر تحليل اسم النطاق للهدف.",
+                    }
+                }), 502
+
+            if resolution_error == "dns_timeout":
+                return jsonify({
+                    "error": {
+                        "code": "DNS_TIMEOUT",
+                        "message": "انتهت مهلة التحقق من اسم النطاق.",
+                    }
+                }), 504
+
+            if resolution_error == "dns_capacity":
+                return jsonify({
+                    "error": {
+                        "code": "DNS_CAPACITY_EXCEEDED",
+                        "message": "بلغت سعة عمليات التحقق من DNS الحد المسموح.",
+                    }
+                }), 503
+
+            if resolution_error == "timeout":
+                return scan_timeout_response()
+
+            if resolution_error is not None:
+                app.logger.error(
+                    "Target resolution returned an unsupported status."
+                )
+                return jsonify({
+                    "error": {
+                        "code": "INTERNAL_ERROR",
+                        "message": "تعذر تنفيذ الفحص.",
+                    }
+                }), 500
 
             # تمرير نتيجة التحقق نفسها والمهلة المتبقية إلى المحرك.
             scan_options = {
