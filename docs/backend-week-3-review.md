@@ -106,3 +106,33 @@ Backend-owned parameterized API integration tests were added to `tests/test_api.
 ## Next step — Friday
 
 Proceed with Backend-owned API integration for `cors_misconfiguration`: preserve CORS evidence states, verify preflight-related findings are passed through without Flask-side reinterpretation, and ensure untrusted origin/header values do not leak into API output or logs. Scanner probe and evaluator implementation remain with Dalal.
+
+
+## Friday — CORS API integration
+
+**Status:** Closed after full CI verification.
+
+Backend-owned API integration tests now cover these CORS evidence states through the real report engine:
+
+- A wildcard origin with the requested method/header is preserved as `warning`.
+- The explicit CyberShield test origin with the requested method/header is preserved as `warning`, including the credential flag context.
+- A successful preflight that does not grant the test origin is preserved as `passed`.
+- An unavailable preflight remains `not_verified`.
+- An untrusted origin value is not echoed into the API response or Backend logs.
+- Multiple conflicting `Access-Control-Allow-Origin` values remain `not_verified`; only the sanitized classification/reason is returned.
+
+The API may describe a standardized header name when explaining an ambiguous result. It does not return the untrusted header value.
+
+### Friday verification evidence
+
+- **Commit tested:** `4c4be9aa67ea43e4788f825ceca0ad34303a053e`
+- **Workflow:** Backend tests — [Run #67](https://github.com/dalalcoderwitch/CyberShield/actions/runs/43890888691)
+- **Job:** `pytest` — completed successfully
+- **Command:** `python -m pytest -q`
+- **Result:** `1040 passed in 5.92s`
+
+**Friday is closed.** No files under `security_scanner/` or `mobile/` were modified.
+
+## Next step — Saturday
+
+Proceed with Backend-owned API integration for `open_redirect` and `sensitive_file_exposure`: verify safe result propagation, non-following of redirect destinations, sanitized location evidence, and no raw file contents or sensitive values in API responses or Backend logs. Scanner probe/evaluator implementation remains with Dalal.
