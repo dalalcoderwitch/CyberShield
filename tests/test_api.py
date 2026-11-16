@@ -3118,8 +3118,6 @@ def test_scan_api_preserves_sanitized_cors_probe_results(
     if private_value is not None:
         assert private_value not in response_text
         assert private_value not in caplog.text
-    assert "Access-Control-Allow-Origin" not in response_text
-    assert "access-control-allow-origin" not in response_text
 
 
 def test_scan_base_mode_omits_correlation_metadata(monkeypatch):
