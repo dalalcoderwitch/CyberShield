@@ -1526,3 +1526,92 @@ def test_unhandled_internal_server_error_returns_safe_json():
     assert "private internal details" not in response.get_data(
         as_text=True
     )
+
+
+def test_scan_endpoint_preserves_all_twelve_findings(monkeypatch):
+    """Flask must preserve the five foundational and seven Week 2 findings."""
+
+    app = api_module.create_app()
+    client = app.test_client()
+
+    check_ids = [
+        "https_connection",
+        "header_hsts",
+        "header_csp",
+        "header_x_content_type_options",
+        "header_x_frame_options",
+        "tls_certificate_expiry",
+        "tls_certificate_chain",
+        "tls_protocol_config",
+        "http_to_https_redirect",
+        "redirect_destination_safety",
+        "header_referrer_policy",
+        "header_permissions_policy",
+    ]
+
+    findings = [
+        {
+            "check_id": check_id,
+            "title": check_id,
+            "status": "passed",
+            "severity": "info",
+            "confidence": "high",
+            "evidence": "Test evidence",
+            "explanation": "Test explanation",
+            "recommendation": "Test recommendation",
+            "limitations": ["Synthetic API integration test"],
+        }
+        for check_id in check_ids
+    ]
+
+    report = {
+        "scan_id": "test-scan-id",
+        "status": "completed",
+        "target_url": "https://example.com",
+        "scanned_at": "2026-11-16T12:00:00Z",
+        "engine_version": "1.0.0",
+        "http_status": 200,
+        "summary": {
+            "total": 12,
+            "passed": 12,
+            "warning": 0,
+            "not_verified": 0,
+            "error": 0,
+            "skipped": 0,
+        },
+        "findings": findings,
+        "limitations": ["Synthetic API integration test"],
+        "notice": "Test report",
+    }
+
+    monkeypatch.setattr(
+        api_module,
+        "resolve_target",
+        lambda url, deadline=None: object(),
+    )
+    monkeypatch.setattr(
+        api_module,
+        "scan_target",
+        lambda target_url, resolved_target=None, deadline=None: report,
+    )
+
+    response = client.post(
+        "/api/v1/scan",
+        json={
+            "target_url": "https://example.com",
+            "authorization_confirmed": True,
+        },
+    )
+
+    assert response.status_code == 200
+
+    actual_report = response.get_json()
+    actual_ids = {
+        finding["check_id"]
+        for finding in actual_report["findings"]
+    }
+
+    assert len(actual_report["findings"]) == 12
+    assert actual_ids == set(check_ids)
+    assert actual_report["summary"]["total"] == 12
+    assert actual_report["summary"]["passed"] == 12
