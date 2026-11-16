@@ -1,10 +1,10 @@
 # CyberShield — API Contract
 
-**Version:** Draft 1.2
+**Version:** Draft 1.3
 
 **Scope:** Project 1 — Website Security Assessment
 
-**Status:** Draft — pending implementation verification and team approval
+**Status:** Implementation-aligned draft — pending team approval
 
 ## 1. Purpose
 
@@ -95,6 +95,18 @@ control and does not make an otherwise prohibited target safe.
 The server must apply its target security policy before making an
 outbound request. A disallowed target must be rejected before scanning
 begins.
+
+### Request validation and body limits
+
+The current Flask implementation applies these limits:
+
+- `target_url` must be a non-empty, trimmed string of at most 2048 characters.
+- `authorization_confirmed` must be a JSON boolean.
+- Missing or incorrectly typed fields return `400 INVALID_REQUEST`.
+- Boolean `false` returns `403 AUTHORIZATION_REQUIRED`.
+- Malformed JSON, empty bodies, and non-JSON content return `400 INVALID_REQUEST`.
+- Flask limits request bodies to 16 KiB (16,384 bytes). Oversized requests return `413 REQUEST_TOO_LARGE`.
+- Authorization is checked before target resolution.
 
 ## 5. Successful Scan Response
 
@@ -392,6 +404,23 @@ The scanner and API must:
 
 Passing mocked tests alone does not prove that the real network
 connection satisfies all these requirements.
+
+### Flask operational limits and local-development CORS
+
+The current Flask API configuration applies these controls:
+
+- A shared 25-second monotonic scan deadline is passed through target resolution and scanning. The API returns `504 SCAN_TIMEOUT` when the deadline expires at a checked stage.
+- At most four scans can run concurrently within one Python process. Additional requests receive `503 SCAN_CAPACITY_EXCEEDED`.
+- Each source is limited to five authorized scan requests per 60 seconds.
+- The in-memory source tracking table supports up to 4096 sources. New sources are rejected with `429 RATE_LIMIT_EXCEEDED` when the table is full.
+- Rate limiting uses `request.remote_addr`; untrusted `X-Forwarded-For` values are not used.
+- Rate limiting and concurrency controls are process-local.
+
+CORS is restricted to `/api/v1/*` and local-development origins matching `http://localhost` or `http://127.0.0.1`, with optional ports. Allowed methods are GET, POST, and OPTIONS. The allowed request header is Content-Type.
+
+These development settings are not a production CORS policy.
+
+The scan deadline does not guarantee hard cancellation of every blocking operating-system DNS lookup or synchronous network operation. Deployment-level verification remains necessary.
 
 ## 13. Known Implementation Review Items
 
