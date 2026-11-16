@@ -1581,3 +1581,93 @@ def test_scan_rejects_non_boolean_expanded_option():
 
     assert response.status_code == 400
     assert response.json["error"]["code"] == "INVALID_REQUEST"
+
+@pytest.mark.parametrize(
+    ("resolution_error", "expected_status", "expected_code"),
+    [
+        ("invalid", 403, "TARGET_NOT_ALLOWED"),
+        ("not_allowed", 403, "TARGET_NOT_ALLOWED"),
+        ("dns_error", 502, "DNS_RESOLUTION_FAILED"),
+        ("dns_timeout", 504, "DNS_TIMEOUT"),
+        ("dns_capacity", 503, "DNS_CAPACITY_EXCEEDED"),
+        ("timeout", 504, "SCAN_TIMEOUT"),
+    ],
+)
+def test_scan_maps_detailed_resolution_errors_to_api_responses(
+    monkeypatch,
+    resolution_error,
+    expected_status,
+    expected_code,
+):
+    """تحويل حالات المحرك التفصيلية إلى استجابات API مستقرة وآمنة."""
+
+    app = api_module.create_app()
+    client = app.test_client()
+
+    monkeypatch.setattr(
+        api_module,
+        "resolve_target",
+        lambda url, deadline=None: (None, resolution_error),
+    )
+
+    def unexpected_scan(*args, **kwargs):
+        raise AssertionError(
+            "يجب ألا يبدأ الفحص عندما يفشل التحقق من الهدف"
+        )
+
+    monkeypatch.setattr(api_module, "scan_target", unexpected_scan)
+
+    response = client.post(
+        "/api/v1/scan",
+        json={
+            "target_url": "https://example.com",
+            "authorization_confirmed": True,
+        },
+    )
+
+    assert response.status_code == expected_status
+    assert response.is_json
+    assert response.json["error"]["code"] == expected_code
+    assert response.json["error"]["message"]
+
+
+def test_scan_passes_detailed_resolved_target_to_engine(monkeypatch):
+    """تمرير نتيجة التحقق التفصيلية نفسها للمحرك دون إعادة DNS."""
+
+    app = api_module.create_app()
+    client = app.test_client()
+
+    target_url = "https://example.com"
+    resolved = object()
+    resolution_calls = []
+
+    def fake_resolve(url, deadline=None):
+        resolution_calls.append((url, deadline))
+        return resolved, None
+
+    captured = {}
+
+    def fake_scan(url, resolved_target=None, deadline=None):
+        captured["url"] = url
+        captured["resolved_target"] = resolved_target
+        captured["deadline"] = deadline
+        return {"status": "completed"}
+
+    monkeypatch.setattr(api_module, "resolve_target", fake_resolve)
+    monkeypatch.setattr(api_module, "scan_target", fake_scan)
+
+    response = client.post(
+        "/api/v1/scan",
+        json={
+            "target_url": target_url,
+            "authorization_confirmed": True,
+        },
+    )
+
+    assert response.status_code == 200
+    assert len(resolution_calls) == 1
+    assert resolution_calls[0][0] == target_url
+    assert captured["url"] == target_url
+    assert captured["resolved_target"] is resolved
+    assert captured["deadline"] == resolution_calls[0][1]
+
