@@ -36,8 +36,20 @@ This adds API-boundary assertions only. It does not modify scanner evaluators, s
 - [x] Review cookie redaction and response/resource boundaries.
 - [x] Confirm the fixed Disclosure path lists and bounded request plan.
 - [x] Prepare Backend-owned Flask integration assertions for all 11 Week 3 checks.
-- [ ] Run the updated API integration test and full CI; record the actual result before declaring the day closed.
+- [x] Run the full API/backend test suite through GitHub Actions on the exact reviewed `main` commit.
+
+### Verification evidence
+
+- **Commit tested:** `b04bd1a5357006d4adcc480af4deeb3f77a0e889`
+- **Workflow:** Backend tests — [Run #59](https://github.com/dalalcoderwitch/CyberShield/actions/runs/43888646587)
+- **Trigger:** `push` to `main`
+- **Job:** `pytest` — completed successfully
+- **Command:** `python -m pytest -q`
+- **Result:** `1024 passed in 5.99s`
+- Dependency installation and all workflow steps completed successfully.
+
+**Day 1 is closed.** The verification above is the full configured pytest suite, including the Flask expanded-report integration test; no separate one-test invocation was configured in CI.
 
 ## Next step — Wednesday
 
-Proceed only after Day 1 verification is complete. Wednesday's scope is limited to the API integration of `cookie_secure` and `cookie_httponly`, including multiple cookies, missing attributes/evidence, and explicit proof that cookie values do not appear in API responses or logs. Scanner rule implementation remains with Dalal.
+Proceed to Backend-owned API integration verification for `cookie_secure` and `cookie_httponly`: multiple cookies, missing attributes/evidence, and proof that cookie names/values do not appear in API responses or Backend logs. Scanner rule implementation and scanner-owned tests remain with Dalal.
