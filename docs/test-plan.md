@@ -131,6 +131,8 @@ The API test file also covers request-size and method errors, rate limiting, sca
 
 The Week 2 Backend integration regression `test_scan_api_preserves_week2_findings_and_partial_results` sends the five foundational and seven Week 2 IDs through the Flask route and checks that finding fields, all five statuses, and summary counts are preserved unchanged. Its controlled engine fixture sets one Week 2 result to `error` and verifies the remaining eleven findings remain in the response. Existing report/scanner tests separately exercise the underlying TLS, redirect, and header evaluators.
 
+The parameterized API integration regression `test_scan_api_preserves_tls_expiry_outcome_and_other_week2_checks` exercises valid, expired, and malformed certificate dates through Flask and the real report engine. It checks `passed`, `warning`, and `not_verified` expiry outcomes, verifies that chain and negotiated-protocol results remain present, and checks summary consistency.
+
 ### 6.2 Report Tests — tests/test_report.py
 
 Representative report tests include:
