@@ -75,11 +75,20 @@ def test_scan_rejects_malformed_json():
     assert response.json["error"]["code"] == "INVALID_REQUEST"
 
 
-def test_scan_rejects_oversized_request():
-    """إرجاع JSON موحد عندما يتجاوز جسم الطلب الحد المسموح."""
+def test_scan_rejects_oversized_request_before_target_resolution(monkeypatch):
+    """Reject an oversized body at the Flask boundary without starting DNS or a scan."""
 
     app = api_module.create_app()
     client = app.test_client()
+
+    def unexpected_resolve(*args, **kwargs):
+        raise AssertionError("Oversized requests must be rejected before DNS.")
+
+    def unexpected_scan(*args, **kwargs):
+        raise AssertionError("Oversized requests must never start a scan.")
+
+    monkeypatch.setattr(api_module, "resolve_target", unexpected_resolve)
+    monkeypatch.setattr(api_module, "scan_target", unexpected_scan)
 
     response = client.post(
         "/api/v1/scan",
@@ -91,6 +100,7 @@ def test_scan_rejects_oversized_request():
     )
 
     assert response.status_code == 413
+    assert response.is_json
     assert response.json["error"]["code"] == "REQUEST_TOO_LARGE"
 
 
