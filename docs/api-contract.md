@@ -1,10 +1,10 @@
 # CyberShield — API Contract
 
-**Version:** Draft 1.2
+**Version:** Draft 1.3 (proposal)
 
 **Scope:** Project 1 — Website Security Assessment
 
-**Status:** Draft — implementation checked against `main` on 2026-11-16; pending team approval
+**Status:** Draft — expanded-report metadata proposal checked against `main` on 2026-11-16; pending Dalal and Ahmad approval
 
 ## 1. Purpose
 
@@ -219,6 +219,8 @@ scan mode and the checks returned by the engine.
 | `http_status` | Target response status code, or `null` if no response was obtained |
 | `summary` | Counts of findings by status |
 | `findings` | The individual check results returned by the selected scan mode |
+| `correlations` | Expanded-mode contextual relationships between existing findings; omitted in base mode |
+| `correlation_rules_version` | Expanded-mode correlation catalog version; omitted in base mode |
 | `limitations` | Report-level limitations |
 | `notice` | General assessment disclaimer |
 
@@ -230,6 +232,60 @@ Every status count must match the findings actually returned.
 
 The illustrative report above has five findings: one `passed` and four
 `warning`. Therefore, the summary counts add up to five.
+
+### Proposed expanded-report metadata (pending team approval)
+
+When `include_expanded_checks` is `true`, the report includes both
+`correlations` and `correlation_rules_version`. When the option is omitted
+or `false`, both fields are omitted. In expanded mode, `correlations` is
+an array and may be empty when no correlation rule is satisfied; the
+rules-version field is still present.
+
+Each correlation is contextual information about existing findings. It
+is not a new finding, does not prove an exploit chain, and must not be
+added to `findings` or any `summary` counter. The API passes this metadata
+through unchanged; the scanner owns correlation evaluation and versioning.
+
+| Correlation field | Type | Meaning |
+|---|---|---|
+| `correlation_id` | string | Stable identifier of the correlation rule |
+| `contributing_check_ids` | array of strings | Finding identifiers that contributed to this correlation |
+| `severity` | string | Correlation context severity; currently emitted as `low` |
+| `confidence` | string | Confidence in this context; currently emitted as `low` |
+| `explanation` | string | Why the contributing observations are grouped |
+| `recommendation` | string | Suggested review action |
+| `rules_version` | string | Correlation catalog version used for this item |
+| `rule_version` | string | Version of the individual rule |
+| `limitations` | array of strings | Constraints on interpreting this context |
+
+`correlation_rules_version` is a top-level string identifying the complete
+correlation catalog version. It currently matches each correlation's
+`rules_version` value (`2.0.0`). It is separate from `engine_version`.
+
+Illustrative expanded-only fields:
+
+```json
+{
+  "correlations": [
+    {
+      "correlation_id": "cookie_defense_gaps",
+      "contributing_check_ids": ["cookie_secure", "cookie_httponly"],
+      "severity": "low",
+      "confidence": "low",
+      "explanation": "Two independent cookie observations need joint review.",
+      "recommendation": "Review the Secure and HttpOnly attributes.",
+      "rules_version": "2.0.0",
+      "rule_version": "1",
+      "limitations": ["This context does not establish an exploit chain."]
+    }
+  ],
+  "correlation_rules_version": "2.0.0"
+}
+```
+
+This proposal reflects the current scanner output and remains subject to
+review by the scanner and Flutter owners before it becomes a finalized
+cross-team contract.
 
 ## 6. Finding Schema
 
@@ -262,6 +318,13 @@ Every finding must contain the following fields:
 
 The `limitations` field must be an array of strings in each finding
 and at the report level.
+
+The Flutter model also has optional presentation fields named `impact`,
+`remediation`, `relations`, and `priority`. These are not required finding
+fields in the current `CheckResult` serializer and are not promoted to
+required API fields by this proposal. Their scanner-owned meanings and
+production emission conditions must be agreed before they are treated as
+stable cross-client fields.
 
 Severity, confidence, and status represent different concepts and
 must not be used interchangeably.
@@ -429,7 +492,7 @@ the current automated suite passes.
 - [ ] Dalal reviews finding semantics and scanner output.
 - [ ] Bailsan reviews Flask request validation and API error behavior.
 - [ ] Ahmad reviews the response schema for Dart models and UI.
-- [ ] The team agrees on report fields and field types.
+- [ ] The team agrees on report fields and field types, including the expanded-only correlation metadata.
 - [ ] The team agrees on scan-level versus API-level failure behavior.
 - [ ] API tests validate the approved contract.
 - [ ] The approved version is recorded in Git.
