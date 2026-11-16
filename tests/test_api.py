@@ -786,19 +786,51 @@ def test_scan_api_preserves_week2_header_evaluator_results(
 
 
 @pytest.mark.parametrize(
-    "not_after,raise_parse_error,expected_status",
+    "not_after,raise_parse_error,chain_available,tls_version,tls_cipher,"
+    "expected_expiry_status,expected_chain_status,expected_protocol_status",
     [
-        ("Jan 01 00:00:00 2099 GMT", False, "passed"),
-        ("Jan 01 00:00:00 2020 GMT", False, "warning"),
-        ("not-a-valid-asn1-date", False, "not_verified"),
-        ("Jan 01 00:00:00 2099 GMT", True, "error"),
+        (
+            "Jan 01 00:00:00 2099 GMT", False, True,
+            "TLSv1.3", "TLS_AES_128_GCM_SHA256",
+            "passed", "passed", "passed",
+        ),
+        (
+            "Jan 01 00:00:00 2020 GMT", False, True,
+            "TLSv1.3", "TLS_AES_128_GCM_SHA256",
+            "warning", "passed", "passed",
+        ),
+        (
+            "not-a-valid-asn1-date", False, True,
+            "TLSv1.3", "TLS_AES_128_GCM_SHA256",
+            "not_verified", "passed", "passed",
+        ),
+        (
+            "Jan 01 00:00:00 2099 GMT", True, True,
+            "TLSv1.3", "TLS_AES_128_GCM_SHA256",
+            "error", "passed", "passed",
+        ),
+        (
+            "Jan 01 00:00:00 2099 GMT", False, False,
+            "TLSv1.3", "TLS_AES_128_GCM_SHA256",
+            "passed", "not_verified", "passed",
+        ),
+        (
+            "Jan 01 00:00:00 2099 GMT", False, True,
+            None, None,
+            "passed", "passed", "not_verified",
+        ),
     ],
 )
 def test_scan_api_preserves_tls_expiry_outcome_and_other_week2_checks(
     monkeypatch,
     not_after,
     raise_parse_error,
-    expected_status,
+    chain_available,
+    tls_version,
+    tls_cipher,
+    expected_expiry_status,
+    expected_chain_status,
+    expected_protocol_status,
 ):
     """Exercise certificate-date outcomes through Flask and the real report engine."""
 
@@ -843,9 +875,9 @@ def test_scan_api_preserves_tls_expiry_outcome_and_other_week2_checks(
         tls_metadata.update(
             not_before="Jan 01 00:00:00 2020 GMT",
             not_after=not_after,
-            chain_available=True,
-            version="TLSv1.3",
-            cipher="TLS_AES_128_GCM_SHA256",
+            chain_available=chain_available,
+            version=tls_version,
+            cipher=tls_cipher,
         )
         if cookie_evidence_capture is not None:
             cookie_evidence_capture.update(
@@ -915,9 +947,9 @@ def test_scan_api_preserves_tls_expiry_outcome_and_other_week2_checks(
         for finding in report["findings"]
     }
 
-    assert findings_by_id["tls_certificate_expiry"]["status"] == expected_status
-    assert findings_by_id["tls_certificate_chain"]["status"] == "passed"
-    assert findings_by_id["tls_protocol_config"]["status"] == "passed"
+    assert findings_by_id["tls_certificate_expiry"]["status"] == expected_expiry_status
+    assert findings_by_id["tls_certificate_chain"]["status"] == expected_chain_status
+    assert findings_by_id["tls_protocol_config"]["status"] == expected_protocol_status
     assert findings_by_id["https_connection"]["status"] == "passed"
     assert len(report["findings"]) == report["summary"]["total"] == 30
     for status in ("passed", "warning", "not_verified", "error", "skipped"):
