@@ -1529,18 +1529,32 @@ def test_unhandled_internal_server_error_returns_safe_json():
 
 
 def test_scan_can_request_expanded_checks(monkeypatch):
-    """تمرير خيار الفحوص الموسعة والحفاظ على بيانات المحرك كما هي."""
+    """Preserve the documented expanded correlation metadata unchanged."""
     app = api_module.create_app()
     client = app.test_client()
     resolved = object()
     captured = {}
+    correlation = {
+        "correlation_id": "cookie_defense_gaps",
+        "contributing_check_ids": ["cookie_secure", "cookie_httponly"],
+        "severity": "low",
+        "confidence": "low",
+        "explanation": "Two independent cookie observations need review.",
+        "recommendation": "Review Secure and HttpOnly for the observed cookies.",
+        "rules_version": "2.0.0",
+        "rule_version": "1",
+        "limitations": ["This context does not establish an exploit chain."],
+    }
+    findings = (
+        [{"check_id": "cookie_secure"}, {"check_id": "cookie_httponly"}]
+        + [{}] * 22
+    )
     engine_report = {
         "status": "completed",
-        "findings": [{}] * 24,
-        # Metadata is treated as opaque engine output until the team
-        # approves its shared API/Flutter contract.
-        "correlations": [{"rule_id": "opaque-test-rule"}],
-        "correlation_rules_version": "test-version",
+        "summary": {"total": len(findings)},
+        "findings": findings,
+        "correlations": [correlation],
+        "correlation_rules_version": "2.0.0",
     }
 
     monkeypatch.setattr(
@@ -1569,8 +1583,54 @@ def test_scan_can_request_expanded_checks(monkeypatch):
     assert response.status_code == 200
     assert captured["include_expanded_checks"] is True
     assert captured["resolved_target"] is resolved
-    assert len(response.json["findings"]) == 24
-    assert response.get_json() == engine_report
+    report = response.get_json()
+    assert report == engine_report
+    assert report["correlation_rules_version"] == "2.0.0"
+    assert report["correlations"] == [correlation]
+    assert report["correlations"][0]["rules_version"] == (
+        report["correlation_rules_version"]
+    )
+    # Correlations are context, not findings, and do not change summary totals.
+    assert report["summary"]["total"] == len(report["findings"]) == 24
+
+
+def test_scan_base_mode_omits_correlation_metadata(monkeypatch):
+    """Base mode does not expose expanded-only correlation metadata."""
+    app = api_module.create_app()
+    client = app.test_client()
+    captured = {}
+    base_report = {
+        "status": "completed",
+        "summary": {"total": 1},
+        "findings": [{"check_id": "https_connection"}],
+    }
+
+    monkeypatch.setattr(
+        api_module,
+        "resolve_target",
+        lambda url, deadline=None: object(),
+    )
+
+    def fake_scan(url, resolved_target=None, deadline=None,
+                  include_expanded_checks=False):
+        captured["include_expanded_checks"] = include_expanded_checks
+        return base_report
+
+    monkeypatch.setattr(api_module, "scan_target", fake_scan)
+
+    response = client.post(
+        "/api/v1/scan",
+        json={
+            "target_url": "https://example.com",
+            "authorization_confirmed": True,
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured["include_expanded_checks"] is False
+    assert response.get_json() == base_report
+    assert "correlations" not in response.json
+    assert "correlation_rules_version" not in response.json
 
 
 
