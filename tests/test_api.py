@@ -2734,6 +2734,219 @@ def test_scan_api_returns_correlation_generated_by_real_report_engine(
     assert report["summary"]["total"] == len(report["findings"])
 
 
+def _patch_expanded_cookie_api_dependencies(
+    monkeypatch,
+    *,
+    cookie_evidence_available,
+    cookie_observations,
+    raw_set_cookie,
+):
+    """Isolate the real report engine behind the Flask API boundary."""
+    from urllib.parse import urlsplit
+
+    from security_scanner.checks.result import CheckResult
+
+    monkeypatch.setattr(
+        api_module,
+        "resolve_target",
+        lambda url, deadline=None: object(),
+    )
+
+    headers = {
+        "Strict-Transport-Security": "max-age=31536000",
+        "Content-Security-Policy": "default-src 'self'",
+        "X-Content-Type-Options": "nosniff",
+        "X-Frame-Options": "DENY",
+        "Set-Cookie": raw_set_cookie,
+    }
+
+    def fake_get_response(
+        url,
+        resolved_target=None,
+        deadline=None,
+        tls_metadata=None,
+        redirect_dns_answers=None,
+        validated_target_capture=None,
+        cookie_evidence_capture=None,
+        access_evidence_capture=None,
+        disclosure_evidence_capture=None,
+    ):
+        if validated_target_capture is not None:
+            validated_target_capture["target"] = (
+                urlsplit(url),
+                "example.com",
+                ["93.184.216.34"],
+            )
+            validated_target_capture["takeover_hostname"] = "example.com"
+        if cookie_evidence_capture is not None:
+            cookie_evidence_capture.update(
+                available=cookie_evidence_available,
+                observations=cookie_observations,
+            )
+        if access_evidence_capture is not None:
+            access_evidence_capture.update(
+                available=True,
+                location_values=(),
+            )
+        if disclosure_evidence_capture is not None:
+            disclosure_evidence_capture.clear()
+        return 200, headers, None
+
+    monkeypatch.setattr(
+        "security_scanner.report._safe_get_response",
+        fake_get_response,
+    )
+    monkeypatch.setattr(
+        "security_scanner.report._safe_cors_preflight",
+        lambda target, deadline=None, capture=None: None,
+    )
+    monkeypatch.setattr(
+        "security_scanner.report._collect_disclosure_evidence",
+        lambda target, status_code, capture, deadline=None: None,
+    )
+    monkeypatch.setattr(
+        "security_scanner.report._safe_http_redirect_probe",
+        lambda target, deadline=None, capture=None: None,
+    )
+
+    def dns_result(check_id, title):
+        return CheckResult(
+            check_id=check_id,
+            title=title,
+            status="skipped",
+            severity="info",
+            confidence="low",
+            evidence="DNS evaluation was isolated in this API integration test.",
+            explanation="No DNS security conclusion is inferred by this fixture.",
+            recommendation="Run the dedicated DNS evaluator tests.",
+            limitations=("This result is specific to the isolated test fixture.",),
+        )
+
+    monkeypatch.setattr(
+        "security_scanner.report.evaluate_spf_domain",
+        lambda domain, deadline=None: dns_result("dns_spf", "SPF"),
+    )
+    monkeypatch.setattr(
+        "security_scanner.report.evaluate_dmarc_domain",
+        lambda domain, deadline=None: dns_result("dns_dmarc", "DMARC"),
+    )
+    monkeypatch.setattr(
+        "security_scanner.report.evaluate_dnssec_domain",
+        lambda domain, deadline=None: dns_result("dnssec", "DNSSEC"),
+    )
+    monkeypatch.setattr(
+        "security_scanner.report.evaluate_takeover_domain",
+        lambda hostname, deadline=None: dns_result(
+            "subdomain_takeover_indicators",
+            "Passive takeover indicators",
+        ),
+    )
+
+
+def test_scan_api_aggregates_multiple_cookie_attributes_without_disclosing_values(
+    monkeypatch,
+    caplog,
+):
+    """Multiple Set-Cookie observations reach Flask only as aggregate, sanitized findings."""
+    cookie_name = "private_session_cookie_name_7f31"
+    cookie_value = "private_cookie_value_9c82"
+    raw_set_cookie = (
+        f"{cookie_name}={cookie_value}; Path=/; Secure; HttpOnly, "
+        "csrf_private=csrf_value_4d20; Path=/; Secure"
+    )
+    observations = (
+        (True, True, "lax"),
+        (False, True, "strict"),
+        (True, False, "none"),
+    )
+    _patch_expanded_cookie_api_dependencies(
+        monkeypatch,
+        cookie_evidence_available=True,
+        cookie_observations=observations,
+        raw_set_cookie=raw_set_cookie,
+    )
+
+    app = api_module.create_app()
+    client = app.test_client()
+    response = client.post(
+        "/api/v1/scan",
+        json={
+            "target_url": "https://example.com",
+            "authorization_confirmed": True,
+            "include_expanded_checks": True,
+        },
+    )
+
+    assert response.status_code == 200
+    report = response.get_json()
+    findings = {
+        item["check_id"]: item
+        for item in report["findings"]
+    }
+
+    assert findings["cookie_secure"]["status"] == "warning"
+    assert "3" in findings["cookie_secure"]["evidence"]
+    assert findings["cookie_httponly"]["status"] == "warning"
+    assert "3" in findings["cookie_httponly"]["evidence"]
+    assert findings["cookie_samesite"]["status"] == "passed"
+
+    response_text = response.get_data(as_text=True)
+    for secret in (
+        cookie_name,
+        cookie_value,
+        "csrf_private",
+        "csrf_value_4d20",
+        raw_set_cookie,
+    ):
+        assert secret not in response_text
+        assert secret not in caplog.text
+    assert "Set-Cookie" not in response_text
+
+
+@pytest.mark.parametrize(
+    ("available", "observations", "expected_status"),
+    [
+        (False, (), "not_verified"),
+        (True, (), "skipped"),
+    ],
+)
+def test_scan_api_preserves_cookie_status_when_evidence_is_missing_or_empty(
+    monkeypatch,
+    available,
+    observations,
+    expected_status,
+):
+    """Missing collection evidence is not confused with a clean cookie result."""
+    _patch_expanded_cookie_api_dependencies(
+        monkeypatch,
+        cookie_evidence_available=available,
+        cookie_observations=observations,
+        raw_set_cookie="private_cookie_name=private_cookie_value",
+    )
+
+    app = api_module.create_app()
+    client = app.test_client()
+    response = client.post(
+        "/api/v1/scan",
+        json={
+            "target_url": "https://example.com",
+            "authorization_confirmed": True,
+            "include_expanded_checks": True,
+        },
+    )
+
+    assert response.status_code == 200
+    report = response.get_json()
+    findings = {
+        item["check_id"]: item
+        for item in report["findings"]
+    }
+    assert findings["cookie_secure"]["status"] == expected_status
+    assert findings["cookie_httponly"]["status"] == expected_status
+    assert "private_cookie_name" not in response.get_data(as_text=True)
+    assert "private_cookie_value" not in response.get_data(as_text=True)
+
+
 def test_scan_base_mode_omits_correlation_metadata(monkeypatch):
     """Base mode does not expose expanded-only correlation metadata."""
     app = api_module.create_app()
