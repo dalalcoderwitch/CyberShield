@@ -4,8 +4,8 @@ import http.client
 import socket
 import ssl
 import time
-from http.server import BaseHTTPRequestHandler, HTTPServer
-from threading import Thread
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from threading import Event, Thread
 from types import SimpleNamespace
 from urllib.parse import urlparse
 
@@ -241,6 +241,7 @@ Sydvx0FeNWmqPBhmlaj0SqH0
     connected_peers = []
     requests_seen = []
     tls_metadata = []
+    slow_response_started = Event()
 
     tls_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     tls_context.load_cert_chain(
@@ -272,6 +273,20 @@ Sydvx0FeNWmqPBhmlaj0SqH0
             self.send_header("Transfer-Encoding", "chunked")
             self.end_headers()
 
+            if self.path == "/slow":
+                slow_response_started.set()
+                # Headers arrive promptly, but the first response-body byte
+                # arrives after the scanner's two-second read timeout.
+                time.sleep(2.5)
+                try:
+                    self.wfile.write(
+                        f"{len(body):X}\\r\\n".encode("ascii") + body + b"\\r\\n0\\r\\n\\r\\n"
+                    )
+                    self.wfile.flush()
+                except OSError:
+                    pass
+                return
+
             try:
                 for offset in range(0, len(body), 1024):
                     chunk = body[offset:offset + 1024]
@@ -291,7 +306,8 @@ Sydvx0FeNWmqPBhmlaj0SqH0
         def log_message(self, *_args):
             pass
 
-    class TLSServer(HTTPServer):
+    class TLSServer(ThreadingHTTPServer):
+        daemon_threads = True
         def get_request(self):
             raw_socket, address = super().get_request()
             try:
@@ -509,13 +525,13 @@ Sydvx0FeNWmqPBhmlaj0SqH0
         assert findings["header_csp"]["status"] == "warning"
         assert "جودة السياسة" in findings["header_csp"]["explanation"]
 
-        assert dns_lookups.count(("localhost", 443)) == 1
-        assert requested_socket_addresses == [("127.0.0.1", 443)]
+        assert dns_lookups.count(("localhost", 443)) == 2
+        assert requested_socket_addresses == [("127.0.0.1", 443), ("127.0.0.1", 443), ("127.0.0.1", 443)]
         assert connected_peers == [("127.0.0.1", server.server_port)]
         assert received_sni == ["localhost"]
-        assert tls_metadata and tls_metadata[0]["version"].startswith("TLSv")
+        assert tls_metadata and all(item["version"].startswith("TLSv") for item in tls_metadata[:1])
         assert tls_metadata[0]["cipher"]
-        assert requests_seen == ["/"]
+        assert requests_seen == ["/", "/slow"]
 
         assert len(body_samples) == 1
         sample, complete, limit = body_samples[0]
@@ -524,6 +540,26 @@ Sydvx0FeNWmqPBhmlaj0SqH0
         assert sample == body[:limit]
         assert complete is False
         assert b"RAW_RESPONSE_SECRET_DO_NOT_LEAK" not in response.get_data()
+
+        # The server sends headers immediately but withholds the first body
+        # byte beyond the configured two-second read timeout.
+        slow_response = client.post(
+            "/api/v1/scan",
+            json={
+                "target_url": "https://localhost/slow",
+                "authorization_confirmed": True,
+                "include_expanded_checks": True,
+            },
+        )
+        assert slow_response.status_code == 200
+        slow_report = slow_response.get_json()
+        assert slow_report["http_status"] == 200
+        assert slow_response_started.is_set()
+        assert len(body_samples) == 2
+        slow_sample, slow_complete, slow_limit = body_samples[1]
+        assert slow_sample == b""
+        assert slow_complete is False
+        assert slow_limit == 16 * 1024
 
         # A trusted certificate for localhost must still fail for a different
         # requested hostname through the same Flask -> scanner -> TLS path.
@@ -542,9 +578,9 @@ Sydvx0FeNWmqPBhmlaj0SqH0
         assert mismatch_report["http_status"] is None
         assert mismatch_findings["https_connection"]["status"] == "warning"
         assert mismatch_findings["header_hsts"]["status"] == "not_verified"
-        assert received_sni == ["localhost", "wrong.example"]
+        assert received_sni == ["localhost", "localhost", "wrong.example"]
         assert dns_lookups.count(("wrong.example", 443)) == 1
-        assert requests_seen == ["/"]
+        assert requests_seen == ["/", "/slow"]
     finally:
         server.shutdown()
         server.server_close()
