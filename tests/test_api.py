@@ -384,14 +384,6 @@ def test_scan_endpoint_returns_contract_compatible_report(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    "not_after,expected_status",
-    [
-        ("Jan 01 00:00:00 2099 GMT", "passed"),
-        ("Jan 01 00:00:00 2020 GMT", "warning"),
-        ("not-a-valid-asn1-date", "not_verified"),
-    ],
-)
-@pytest.mark.parametrize(
     "probe_status,location,dns_addresses,expected_http_status,expected_safety_status,expected_dns_calls",
     [
         (
@@ -614,6 +606,14 @@ def test_scan_api_preserves_week2_redirect_outcomes_without_following_destinatio
         )
 
 
+@pytest.mark.parametrize(
+    "not_after,expected_status",
+    [
+        ("Jan 01 00:00:00 2099 GMT", "passed"),
+        ("Jan 01 00:00:00 2020 GMT", "warning"),
+        ("not-a-valid-asn1-date", "not_verified"),
+    ],
+)
 def test_scan_api_preserves_tls_expiry_outcome_and_other_week2_checks(
     monkeypatch,
     not_after,
