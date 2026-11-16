@@ -163,3 +163,33 @@ Backend-owned API tests exercise the real Flask/report path for the two schedule
 ## Next step — Sunday
 
 Proceed with the remaining Backend-owned Disclosure API checks: `source_maps_exposure`, `directory_listing`, `server_information_disclosure`, `error_information_disclosure`, and `public_security_files`. Verify status preservation, fixed-scope evidence, and absence of raw source maps, directory entries, server versions, error text, or public-file contents in API responses and Backend logs. Scanner collection/evaluator implementation remains with Dalal.
+
+
+## Sunday — Remaining Disclosure API integration
+
+**Status:** Closed after full CI verification.
+
+Backend-owned API integration tests exercise the remaining Disclosure findings using bounded, classified evidence:
+
+- `source_maps_exposure`: a confirmed map is represented by a fixed status/category; source contents and source paths are not returned.
+- `directory_listing`: a listing is represented by a count/status; directory entries and filenames are not returned.
+- `server_information_disclosure`: approved header names and generic information types are preserved; server/version values are not returned.
+- `error_information_disclosure`: recognized error categories are preserved; stack traces, internal paths, SQL details, and raw error text are not returned.
+- `public_security_files`: only the fixed result category/media type is returned; file contents and contact values are not returned.
+- Missing evidence remains `not_verified`; error-information checks are `skipped` when the original response is not an HTTP error.
+
+The API response and Backend logs are checked against private source-map, filename, server-version, stack-path, and contact-value markers.
+
+### Sunday verification evidence
+
+- **Commit tested:** `e9dbe63d3ce4a44b7be3c3ed866b57b02ce711ee`
+- **Workflow:** Backend tests — [Run #71](https://github.com/dalalcoderwitch/CyberShield/actions/runs/43891721993)
+- **Job:** `pytest` — completed successfully
+- **Command:** `python -m pytest -q`
+- **Result:** `1048 passed in 5.92s`
+
+**Sunday is closed.** No files under `security_scanner/` or `mobile/` were modified.
+
+## Next step — Monday
+
+Perform the final Backend integration audit for the complete expanded report: verify all 23 expanded checks (the seven Week 2 checks and eleven Week 3 checks plus the existing expanded additions) remain present through Flask, validate finding fields and summary counters, review the complete Git diff, run the final full suite, and close Week 3. Do not change scanner-owned or Flutter-owned files.
