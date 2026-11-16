@@ -2677,7 +2677,21 @@ def test_scan_api_returns_correlation_generated_by_real_report_engine(
         "header_referrer_policy",
         "header_permissions_policy",
     }
+    week3_check_ids = {
+        "cookie_secure",
+        "cookie_httponly",
+        "cookie_samesite",
+        "cors_misconfiguration",
+        "open_redirect",
+        "sensitive_file_exposure",
+        "source_maps_exposure",
+        "directory_listing",
+        "server_information_disclosure",
+        "error_information_disclosure",
+        "public_security_files",
+    }
     assert week2_check_ids.issubset(findings_by_id)
+    assert week3_check_ids.issubset(findings_by_id)
     required_finding_fields = {
         "check_id",
         "title",
@@ -2689,7 +2703,7 @@ def test_scan_api_returns_correlation_generated_by_real_report_engine(
         "recommendation",
         "limitations",
     }
-    for check_id in week2_check_ids:
+    for check_id in week2_check_ids | week3_check_ids:
         finding = findings_by_id[check_id]
         assert required_finding_fields.issubset(finding)
         assert finding["status"] in {
@@ -2699,6 +2713,13 @@ def test_scan_api_returns_correlation_generated_by_real_report_engine(
 
     assert findings_by_id["cookie_secure"]["status"] == "warning"
     assert findings_by_id["cookie_httponly"]["status"] == "warning"
+    assert findings_by_id["cookie_samesite"]["status"] == "warning"
+    status_counts = {
+        status: sum(item["status"] == status for item in report["findings"])
+        for status in ("passed", "warning", "not_verified", "error", "skipped")
+    }
+    for status, count in status_counts.items():
+        assert report["summary"][status] == count
 
     assert report["correlation_rules_version"] == "2.0.0"
     assert len(report["correlations"]) == 1
