@@ -133,6 +133,8 @@ The Week 2 Backend integration regression `test_scan_api_preserves_week2_finding
 
 The parameterized API integration regression `test_scan_api_preserves_tls_expiry_outcome_and_other_week2_checks` exercises valid, expired, and malformed certificate dates through Flask and the real report engine. It checks `passed`, `warning`, and `not_verified` expiry outcomes, verifies that chain and negotiated-protocol results remain present, and checks summary consistency.
 
+The API regression `test_scan_api_keeps_expanded_tls_checks_unverified_after_handshake_failure` verifies that a failed TLS handshake leaves certificate expiry, chain, and protocol checks as `not_verified`, while the expanded report, header outcomes, and summary are still returned.
+
 ### 6.2 Report Tests — tests/test_report.py
 
 Representative report tests include:
