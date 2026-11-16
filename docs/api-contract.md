@@ -90,7 +90,9 @@ Content type:
 
 The server must validate the request independently.
 
-The optional `include_expanded_checks` field must be a boolean when supplied; a non-boolean value is rejected as `INVALID_REQUEST`. Omitted values default to `false`. The Flutter client currently requests expanded checks.\n\nThe authorization confirmation is not, by itself, a technical security
+The optional `include_expanded_checks` field must be a boolean when supplied; a non-boolean value is rejected as `INVALID_REQUEST`. Omitted values default to `false`. The Flutter client currently requests expanded checks.
+
+The authorization confirmation is not, by itself, a technical security
 control and does not make an otherwise prohibited target safe.
 
 The server must apply its target security policy before making an
