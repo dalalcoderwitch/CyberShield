@@ -284,9 +284,11 @@ List collected tests without executing them using:
 .\.venv\Scripts\python.exe -m pytest --collect-only -q
 
 The full suite was executed through GitHub Actions on 2026-11-16
-at implementation commit `eb1d40c7e77e97d33d606475054dbd5ab6862e01`.
-GitHub Actions run [#32](https://github.com/dalalcoderwitch/CyberShield/actions/runs/43877410712)
-completed successfully with `1009 passed in 5.10s`. This run includes
+at implementation commit `8ceaf70f3e411ecca4bb27e288c438234dfcb9b2`.
+GitHub Actions run [#36](https://github.com/dalalcoderwitch/CyberShield/actions/runs/43880555774)
+completed successfully with `1010 passed in 5.33s`. This run includes
+the Week 2 Flask API pass-through regression for all 12 foundational and
+Week 2 finding IDs, including preservation of a single-check error result. This run includes
 the Flask-to-report-engine correlation integration regression, the
 seven-rule correlation JSON schema/serialization regression, exact
 Flask request-body boundary tests, bounded chunked-response sampling,
@@ -301,7 +303,7 @@ A test collection count alone does not indicate that the tests passed. Record th
 
 ## 10. Current Acceptance Criteria
 
-- The latest recorded implementation run completed with 1009 passed in 5.10 seconds on implementation commit `eb1d40c7e77e97d33d606475054dbd5ab6862e01` (GitHub Actions run [#32](https://github.com/dalalcoderwitch/CyberShield/actions/runs/43877410712)); later code changes require a new successful run.
+- The latest recorded implementation run completed with 1010 passed in 5.33 seconds on implementation commit `8ceaf70f3e411ecca4bb27e288c438234dfcb9b2` (GitHub Actions run [#36](https://github.com/dalalcoderwitch/CyberShield/actions/runs/43880555774)); later code changes require a new successful run.
 - The test count must be updated whenever tests are added or removed.
 - All current automated tests pass.
 - The test plan distinguishes mocked behavior from real network verification.
