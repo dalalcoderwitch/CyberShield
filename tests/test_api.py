@@ -383,6 +383,151 @@ def test_scan_endpoint_returns_contract_compatible_report(monkeypatch):
     assert report["target_url"] == "https://example.com"
 
 
+def test_scan_api_preserves_week2_findings_and_partial_results(monkeypatch):
+    """The Flask boundary preserves all seven Week 2 checks and partial status."""
+
+    app = api_module.create_app()
+    client = app.test_client()
+    resolved = object()
+    captured = {}
+
+    def make_finding(check_id, status):
+        return {
+            "check_id": check_id,
+            "title": f"Test result for {check_id}",
+            "status": status,
+            "severity": "medium" if status == "warning" else "info",
+            "confidence": "low" if status in ("error", "not_verified", "skipped") else "high",
+            "evidence": {"source": "week2-api-fixture", "check_id": check_id},
+            "explanation": f"Preserve the engine explanation for {check_id}.",
+            "recommendation": f"Preserve the engine recommendation for {check_id}.",
+            "limitations": [f"Fixture limitation for {check_id}."],
+        }
+
+    base_findings = [
+        make_finding("https_connection", "passed"),
+        make_finding("header_hsts", "warning"),
+        make_finding("header_csp", "passed"),
+        make_finding("header_x_content_type_options", "passed"),
+        make_finding("header_x_frame_options", "warning"),
+    ]
+    week2_findings = [
+        make_finding("tls_certificate_expiry", "warning"),
+        make_finding("tls_certificate_chain", "not_verified"),
+        make_finding("tls_protocol_config", "error"),
+        make_finding("http_to_https_redirect", "passed"),
+        make_finding("redirect_destination_safety", "warning"),
+        make_finding("header_referrer_policy", "passed"),
+        make_finding("header_permissions_policy", "skipped"),
+    ]
+    findings = base_findings + week2_findings
+    statuses = ("passed", "warning", "not_verified", "error", "skipped")
+    summary = {
+        status: sum(item["status"] == status for item in findings)
+        for status in statuses
+    }
+    summary["total"] = len(findings)
+
+    engine_report = {
+        "scan_id": "week2-api-contract",
+        "status": "completed",
+        "target_url": "https://example.com",
+        "scanned_at": "2026-11-16T12:00:00Z",
+        "engine_version": "1.0.0",
+        "http_status": 200,
+        "summary": summary,
+        "findings": findings,
+        "limitations": ["Controlled API contract fixture."],
+        "notice": "Limited security assessment.",
+        "correlations": [],
+        "correlation_rules_version": "2.0.0",
+    }
+
+    def fake_resolve(url, deadline=None):
+        captured["resolve_url"] = url
+        return resolved
+
+    def fake_scan(
+        url,
+        resolved_target=None,
+        deadline=None,
+        include_expanded_checks=False,
+    ):
+        captured["scan_url"] = url
+        captured["resolved_target"] = resolved_target
+        captured["include_expanded_checks"] = include_expanded_checks
+        return engine_report
+
+    monkeypatch.setattr(api_module, "resolve_target", fake_resolve)
+    monkeypatch.setattr(api_module, "scan_target", fake_scan)
+
+    response = client.post(
+        "/api/v1/scan",
+        json={
+            "target_url": "https://example.com",
+            "authorization_confirmed": True,
+            "include_expanded_checks": True,
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured["resolve_url"] == "https://example.com"
+    assert captured["scan_url"] == "https://example.com"
+    assert captured["resolved_target"] is resolved
+    assert captured["include_expanded_checks"] is True
+
+    report = response.get_json()
+    assert report == engine_report
+    assert len(report["findings"]) == 12
+    assert report["summary"]["total"] == 12
+
+    expected_week2_ids = {
+        "tls_certificate_expiry",
+        "tls_certificate_chain",
+        "tls_protocol_config",
+        "http_to_https_redirect",
+        "redirect_destination_safety",
+        "header_referrer_policy",
+        "header_permissions_policy",
+    }
+    findings_by_id = {
+        finding["check_id"]: finding
+        for finding in report["findings"]
+    }
+    assert expected_week2_ids.issubset(findings_by_id)
+
+    required_fields = {
+        "check_id",
+        "title",
+        "status",
+        "severity",
+        "confidence",
+        "evidence",
+        "explanation",
+        "recommendation",
+        "limitations",
+    }
+    for check_id in expected_week2_ids:
+        finding = findings_by_id[check_id]
+        assert required_fields.issubset(finding)
+        assert isinstance(finding["evidence"], dict)
+        assert isinstance(finding["limitations"], list)
+        assert finding["title"]
+        assert finding["explanation"]
+        assert finding["recommendation"]
+
+    # A single evaluator error remains attached to its finding; it does not
+    # discard the other Week 2 results or change their status values.
+    assert findings_by_id["tls_protocol_config"]["status"] == "error"
+    assert findings_by_id["tls_certificate_chain"]["status"] == "not_verified"
+    assert findings_by_id["http_to_https_redirect"]["status"] == "passed"
+    for status in statuses:
+        assert report["summary"][status] == sum(
+            finding["status"] == status
+            for finding in report["findings"]
+        )
+
+
 def test_scan_endpoint_preserves_not_verified_findings_on_connection_failure(
     monkeypatch,
 ):
