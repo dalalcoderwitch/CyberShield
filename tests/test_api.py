@@ -117,6 +117,40 @@ def test_scan_rejects_unsupported_method_with_json():
     assert response.json["error"]["code"] == "METHOD_NOT_ALLOWED"
     assert response.json["error"]["message"]
 
+def test_scan_rejects_when_capacity_is_full_before_dns(monkeypatch):
+    """A saturated scan semaphore must reject without resolving or scanning."""
+
+    app = api_module.create_app()
+    client = app.test_client()
+
+    class SaturatedSemaphore:
+        def acquire(self, blocking=False):
+            assert blocking is False
+            return False
+
+    def unexpected_resolve(*args, **kwargs):
+        raise AssertionError("Capacity rejection must happen before DNS.")
+
+    def unexpected_scan(*args, **kwargs):
+        raise AssertionError("Capacity rejection must happen before scanning.")
+
+    monkeypatch.setattr(api_module, "_SCAN_SLOTS", SaturatedSemaphore())
+    monkeypatch.setattr(api_module, "resolve_target", unexpected_resolve)
+    monkeypatch.setattr(api_module, "scan_target", unexpected_scan)
+
+    response = client.post(
+        "/api/v1/scan",
+        json={
+            "target_url": "https://example.com",
+            "authorization_confirmed": True,
+        },
+    )
+
+    assert response.status_code == 503
+    assert response.is_json
+    assert response.json["error"]["code"] == "SCAN_CAPACITY_EXCEEDED"
+
+
 def test_scan_requires_authorization():
     app = api_module.create_app()
     client = app.test_client()
