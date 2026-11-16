@@ -3385,6 +3385,138 @@ def test_scan_api_returns_only_sensitive_file_classification_not_raw_content(
     assert "DB_PASSWORD=" not in caplog.text
 
 
+def test_scan_api_returns_sanitized_remaining_disclosure_classifications(
+    monkeypatch,
+    caplog,
+):
+    """The remaining Disclosure checks expose categories, never source/file/error contents."""
+    from security_scanner.checks.disclosure_evidence import DisclosureEvidence
+
+    private_values = (
+        "private-source-map-source-token-5a21",
+        "private-directory-entry-backup.sql",
+        "private-server-version-9.8.7",
+        "private-stack-trace-path-/srv/app",
+        "private-security-contact@example.invalid",
+    )
+    raw_sample = (
+        "sourceMappingURL=private-source-map-source-token-5a21.map\n"
+        "Index of /uploads/ private-directory-entry-backup.sql\n"
+        "Server: nginx/9.8.7 private-server-version-9.8.7\n"
+        "Traceback /srv/app/private-stack-trace-path-/srv/app\n"
+        "Contact: private-security-contact@example.invalid"
+    ).encode()
+    sanitized_evidence = DisclosureEvidence(
+        source_map_state="confirmed",
+        directory_results=((200, "listing"), (404, "not_found")),
+        server_headers_available=True,
+        server_header_names=("Server", "X-Powered-By"),
+        server_info_types=("version", "technology"),
+        error_status=500,
+        error_sample_complete=True,
+        error_patterns=("stack_trace", "internal_path", "sql_error"),
+        public_file_results=(
+            (200, "security", "present", "text/plain"),
+            (404, "security", "not_found", "unknown"),
+            (200, "robots", "present", "text/plain"),
+        ),
+        request_count=13,
+    )
+    _patch_redirect_disclosure_api_dependencies(
+        monkeypatch,
+        http_status=500,
+        location_values=(),
+        redirect_evidence_available=True,
+        disclosure_evidence=sanitized_evidence,
+        raw_sample=raw_sample,
+    )
+
+    app = api_module.create_app()
+    client = app.test_client()
+    response = client.post(
+        "/api/v1/scan",
+        json={
+            "target_url": "https://example.com",
+            "authorization_confirmed": True,
+            "include_expanded_checks": True,
+        },
+    )
+
+    assert response.status_code == 200
+    report = response.get_json()
+    findings = {
+        item["check_id"]: item
+        for item in report["findings"]
+    }
+    assert findings["source_maps_exposure"]["status"] == "warning"
+    assert findings["directory_listing"]["status"] == "warning"
+    assert findings["server_information_disclosure"]["status"] == "warning"
+    assert findings["error_information_disclosure"]["status"] == "warning"
+    assert findings["public_security_files"]["status"] == "passed"
+
+    response_text = response.get_data(as_text=True)
+    for value in private_values:
+        assert value not in response_text
+        assert value not in caplog.text
+    assert "sourceMappingURL=" not in response_text
+    assert "Traceback" not in response_text
+    assert "nginx/9.8.7" not in response_text
+    for status in ("passed", "warning", "not_verified", "error", "skipped"):
+        assert report["summary"][status] == sum(
+            item["status"] == status
+            for item in report["findings"]
+        )
+
+
+@pytest.mark.parametrize(
+    ("http_status", "expected_error_status"),
+    [
+        (500, "not_verified"),
+        (200, "skipped"),
+    ],
+)
+def test_scan_api_preserves_unavailable_remaining_disclosure_states(
+    monkeypatch,
+    http_status,
+    expected_error_status,
+):
+    """Unavailable Disclosure evidence remains inconclusive; non-error responses skip error checks."""
+    from security_scanner.checks.disclosure_evidence import DisclosureEvidence
+
+    _patch_redirect_disclosure_api_dependencies(
+        monkeypatch,
+        http_status=http_status,
+        location_values=(),
+        redirect_evidence_available=True,
+        disclosure_evidence=DisclosureEvidence(),
+    )
+
+    app = api_module.create_app()
+    client = app.test_client()
+    response = client.post(
+        "/api/v1/scan",
+        json={
+            "target_url": "https://example.com",
+            "authorization_confirmed": True,
+            "include_expanded_checks": True,
+        },
+    )
+
+    assert response.status_code == 200
+    findings = {
+        item["check_id"]: item
+        for item in response.get_json()["findings"]
+    }
+    for check_id in (
+        "source_maps_exposure",
+        "directory_listing",
+        "server_information_disclosure",
+        "public_security_files",
+    ):
+        assert findings[check_id]["status"] == "not_verified"
+    assert findings["error_information_disclosure"]["status"] == expected_error_status
+
+
 def test_scan_base_mode_omits_correlation_metadata(monkeypatch):
     """Base mode does not expose expanded-only correlation metadata."""
     app = api_module.create_app()
