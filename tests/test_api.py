@@ -3120,6 +3120,271 @@ def test_scan_api_preserves_sanitized_cors_probe_results(
         assert private_value not in caplog.text
 
 
+def _patch_redirect_disclosure_api_dependencies(
+    monkeypatch,
+    *,
+    http_status,
+    location_values,
+    redirect_evidence_available,
+    disclosure_evidence,
+    raw_sample=b"",
+):
+    """Isolate bounded scanner probes while exercising the real Flask report path."""
+    from urllib.parse import urlsplit
+
+    from security_scanner.checks.result import CheckResult
+
+    observed = {"primary_urls": [], "redirect_probe_targets": []}
+    monkeypatch.setattr(
+        api_module,
+        "resolve_target",
+        lambda url, deadline=None: object(),
+    )
+
+    headers = {
+        "Strict-Transport-Security": "max-age=31536000",
+        "Content-Security-Policy": "default-src 'self'",
+        "X-Content-Type-Options": "nosniff",
+        "X-Frame-Options": "DENY",
+    }
+
+    def fake_get_response(
+        url,
+        resolved_target=None,
+        deadline=None,
+        tls_metadata=None,
+        redirect_dns_answers=None,
+        validated_target_capture=None,
+        cookie_evidence_capture=None,
+        access_evidence_capture=None,
+        disclosure_evidence_capture=None,
+    ):
+        observed["primary_urls"].append(url)
+        if validated_target_capture is not None:
+            validated_target_capture["target"] = (
+                urlsplit(url),
+                "example.com",
+                ["93.184.216.34"],
+            )
+            validated_target_capture["takeover_hostname"] = "example.com"
+        if tls_metadata is not None:
+            tls_metadata.update(
+                not_before="Jan 01 00:00:00 2020 GMT",
+                not_after="Jan 01 00:00:00 2099 GMT",
+                chain_available=True,
+                version="TLSv1.3",
+                cipher="TLS_AES_128_GCM_SHA256",
+            )
+        if cookie_evidence_capture is not None:
+            cookie_evidence_capture.update(
+                available=True,
+                observations=(),
+            )
+        if access_evidence_capture is not None:
+            access_evidence_capture.update(
+                available=redirect_evidence_available,
+                location_values=location_values,
+            )
+        if disclosure_evidence_capture is not None:
+            disclosure_evidence_capture.update(
+                sample=raw_sample,
+                sample_complete=True,
+                media_type="text/plain",
+            )
+        return http_status, headers, None
+
+    monkeypatch.setattr(
+        "security_scanner.report._safe_get_response",
+        fake_get_response,
+    )
+
+    def fake_redirect_probe(target, deadline=None, capture=None):
+        observed["redirect_probe_targets"].append(target)
+        if capture is not None:
+            capture.update(status=200, request_url="http://93.184.216.34:80/")
+        return None
+
+    monkeypatch.setattr(
+        "security_scanner.report._safe_http_redirect_probe",
+        fake_redirect_probe,
+    )
+    monkeypatch.setattr(
+        "security_scanner.report._safe_cors_preflight",
+        lambda target, deadline=None, capture=None: (
+            capture.update(available=False, error="connection") or "connection"
+        ),
+    )
+
+    def fake_collect_disclosure(target, original_status, original_capture, deadline=None):
+        if original_capture is not None:
+            original_capture.clear()
+        return disclosure_evidence
+
+    monkeypatch.setattr(
+        "security_scanner.report._collect_disclosure_evidence",
+        fake_collect_disclosure,
+    )
+
+    def isolated_dns_result(check_id, title):
+        return CheckResult(
+            check_id=check_id,
+            title=title,
+            status="skipped",
+            severity="info",
+            confidence="low",
+            evidence="DNS evaluation was isolated in this API integration test.",
+            explanation="No DNS conclusion is inferred from this fixture.",
+            recommendation="Use the dedicated DNS evaluator tests.",
+            limitations=("Controlled API test fixture.",),
+        )
+
+    monkeypatch.setattr(
+        "security_scanner.report.evaluate_spf_domain",
+        lambda domain, deadline=None: isolated_dns_result("dns_spf", "SPF"),
+    )
+    monkeypatch.setattr(
+        "security_scanner.report.evaluate_dmarc_domain",
+        lambda domain, deadline=None: isolated_dns_result("dns_dmarc", "DMARC"),
+    )
+    monkeypatch.setattr(
+        "security_scanner.report.evaluate_dnssec_domain",
+        lambda domain, deadline=None: isolated_dns_result("dnssec", "DNSSEC"),
+    )
+    monkeypatch.setattr(
+        "security_scanner.report.evaluate_takeover_domain",
+        lambda hostname, deadline=None: isolated_dns_result(
+            "subdomain_takeover_indicators",
+            "Passive takeover indicators",
+        ),
+    )
+    return observed
+
+
+@pytest.mark.parametrize(
+    ("location_values", "evidence_available", "expected_status", "private_value"),
+    [
+        (
+            ("https://attacker.example/private-redirect-token",),
+            True,
+            "warning",
+            "private-redirect-token",
+        ),
+        (("/account",), True, "passed", None),
+        (
+            (
+                "https://attacker.example/private-redirect-token",
+                "https://other.example/second-private-token",
+            ),
+            True,
+            "not_verified",
+            "private-redirect-token",
+        ),
+        ((), False, "not_verified", "private-redirect-token"),
+    ],
+)
+def test_scan_api_preserves_open_redirect_outcomes_without_following_or_echoing_location(
+    monkeypatch,
+    caplog,
+    location_values,
+    evidence_available,
+    expected_status,
+    private_value,
+):
+    """Open-redirect evidence is classified at the API boundary, never followed or echoed."""
+    from security_scanner.checks.disclosure_evidence import DisclosureEvidence
+
+    observed = _patch_redirect_disclosure_api_dependencies(
+        monkeypatch,
+        http_status=302,
+        location_values=location_values,
+        redirect_evidence_available=evidence_available,
+        disclosure_evidence=DisclosureEvidence(),
+    )
+
+    app = api_module.create_app()
+    client = app.test_client()
+    response = client.post(
+        "/api/v1/scan",
+        json={
+            "target_url": "https://example.com",
+            "authorization_confirmed": True,
+            "include_expanded_checks": True,
+        },
+    )
+
+    assert response.status_code == 200
+    report = response.get_json()
+    finding = next(
+        item for item in report["findings"]
+        if item["check_id"] == "open_redirect"
+    )
+    assert finding["status"] == expected_status
+    assert observed["primary_urls"] == ["https://example.com"]
+    assert len(observed["redirect_probe_targets"]) == 1
+    response_text = response.get_data(as_text=True)
+    if private_value is not None:
+        assert private_value not in response_text
+        assert private_value not in caplog.text
+    assert "attacker.example" not in response_text
+    assert "other.example" not in response_text
+
+
+def test_scan_api_returns_only_sensitive_file_classification_not_raw_content(
+    monkeypatch,
+    caplog,
+):
+    """Sensitive-file evidence is reduced to fixed categories before Flask serializes it."""
+    from security_scanner.checks.disclosure_evidence import DisclosureEvidence
+
+    secret_value = "backend-private-db-password-8f4d"
+    raw_sample = f"DB_PASSWORD={secret_value}\nSECRET_KEY=another-private-key".encode()
+    sanitized_evidence = DisclosureEvidence(
+        sensitive_results=(
+            (200, "found", "dotenv"),
+            (404, "not_found", None),
+            (404, "not_found", None),
+            (404, "not_found", None),
+            (404, "not_found", None),
+            (404, "not_found", None),
+        ),
+        request_count=6,
+    )
+    _patch_redirect_disclosure_api_dependencies(
+        monkeypatch,
+        http_status=200,
+        location_values=(),
+        redirect_evidence_available=True,
+        disclosure_evidence=sanitized_evidence,
+        raw_sample=raw_sample,
+    )
+
+    app = api_module.create_app()
+    client = app.test_client()
+    response = client.post(
+        "/api/v1/scan",
+        json={
+            "target_url": "https://example.com",
+            "authorization_confirmed": True,
+            "include_expanded_checks": True,
+        },
+    )
+
+    assert response.status_code == 200
+    report = response.get_json()
+    finding = next(
+        item for item in report["findings"]
+        if item["check_id"] == "sensitive_file_exposure"
+    )
+    assert finding["status"] == "warning"
+    assert "1 من ستة مسارات ثابتة" in finding["evidence"]
+    response_text = response.get_data(as_text=True)
+    assert secret_value not in response_text
+    assert "another-private-key" not in response_text
+    assert secret_value not in caplog.text
+    assert "SECRET_KEY=" not in caplog.text
+    assert "DB_PASSWORD=" not in caplog.text
+
+
 def test_scan_base_mode_omits_correlation_metadata(monkeypatch):
     """Base mode does not expose expanded-only correlation metadata."""
     app = api_module.create_app()
