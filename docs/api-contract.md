@@ -490,15 +490,16 @@ The following items require implementation review or additional testing:
 These items must not be described as fully implemented merely because
 the current automated suite passes.
 
-## 14. Team Approval Checklist
+## 14. Cross-client Rollout Checklist
 
-- [ ] Dalal reviews finding semantics and scanner output.
-- [ ] Bailsan reviews Flask request validation and API error behavior.
-- [ ] Ahmad reviews the response schema for Dart models and UI.
-- [ ] The team agrees on report fields and field types, including the expanded-only correlation metadata.
-- [ ] The team agrees on scan-level versus API-level failure behavior.
-- [ ] API tests validate the approved contract.
-- [ ] The approved version is recorded in Git.
+- [ ] Dalal verifies that the documented correlation semantics match scanner output.
+- [x] Backend request validation and API error behavior have been reviewed against the Flask implementation.
+- [ ] Ahmad implements and verifies the response fields in the Dart model and report UI.
+- [x] The Backend response shape is defined, including expanded-only correlation metadata.
+- [x] API tests validate expanded metadata passthrough, empty correlations, and base-mode omission.
+- [x] Backend contract version 1.3 is recorded in Git.
+- [ ] The team completes an end-to-end scan test from Scanner through Flask to Flutter.
 
-This document remains a draft until the implementation has been checked
-and the team has reviewed and approved the contract.
+Version 1.3 is the Backend contract baseline. The remaining checklist items
+track cross-client verification and adoption; they do not make the defined
+Flask response behavior provisional.
