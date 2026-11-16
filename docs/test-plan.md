@@ -131,7 +131,7 @@ The API test file also covers request-size and method errors, rate limiting, sca
 
 The Week 2 Backend integration regression `test_scan_api_preserves_week2_findings_and_partial_results` sends the five foundational and seven Week 2 IDs through the Flask route and checks that finding fields, all five statuses, and summary counts are preserved unchanged. Its controlled engine fixture sets one Week 2 result to `error` and verifies the remaining eleven findings remain in the response. Existing report/scanner tests separately exercise the underlying TLS, redirect, and header evaluators.
 
-The parameterized API integration regression `test_scan_api_preserves_tls_expiry_outcome_and_other_week2_checks` exercises valid, expired, and malformed certificate dates through Flask and the real report engine. It checks `passed`, `warning`, and `not_verified` expiry outcomes, verifies that chain and negotiated-protocol results remain present, and checks summary consistency.
+The parameterized API integration regression `test_scan_api_preserves_tls_expiry_outcome_and_other_week2_checks` exercises valid, expired, malformed, and date-parser-error outcomes through Flask and the real report engine. It also exercises a verified handshake with unavailable chain metadata and missing negotiated TLS version/cipher fields, checking that only the affected TLS check becomes `not_verified` while the remaining TLS findings and report summary are retained.
 
 The API regression `test_scan_api_keeps_expanded_tls_checks_unverified_after_handshake_failure` verifies that a failed TLS handshake leaves certificate expiry, chain, and protocol checks as `not_verified`, while the expanded report, header outcomes, and summary are still returned.
 
@@ -292,12 +292,14 @@ List collected tests without executing them using:
 .\.venv\Scripts\python.exe -m pytest --collect-only -q
 
 The full suite was executed through GitHub Actions on 2026-11-16
-at implementation commit `b9069ecc9e4cec14a9cb0a04530c2430a6c900b2`.
-GitHub Actions run [#49](https://github.com/dalalcoderwitch/CyberShield/actions/runs/43883790475)
-completed successfully with `1021 passed in 5.04s`. This run includes
-the Week 2 Flask pass-through and real report-engine assertions, certificate
-expiry and handshake-failure outcomes, four redirect policy scenarios without
-following the destination, and three Referrer-Policy/Permissions-Policy cases. This run includes
+at implementation commit `a5400d08c139b9d75aede1438c822d74133395ce`.
+GitHub Actions run [#52](https://github.com/dalalcoderwitch/CyberShield/actions/runs/43884580764)
+completed successfully with `1024 passed in 6.14s`. This run includes
+the Week 2 Flask pass-through and real report-engine assertions, valid,
+expired, malformed, and evaluator-error certificate-date outcomes, a verified
+handshake with unavailable chain metadata, missing negotiated TLS metadata,
+handshake failure, four redirect policy scenarios, and three header policy
+scenarios. This run includes
 the Flask-to-report-engine correlation integration regression, the
 seven-rule correlation JSON schema/serialization regression, exact
 Flask request-body boundary tests, bounded chunked-response sampling,
@@ -312,7 +314,7 @@ A test collection count alone does not indicate that the tests passed. Record th
 
 ## 10. Current Acceptance Criteria
 
-- The latest recorded implementation run completed with 1021 passed in 5.04 seconds on implementation commit `b9069ecc9e4cec14a9cb0a04530c2430a6c900b2` (GitHub Actions run [#49](https://github.com/dalalcoderwitch/CyberShield/actions/runs/43883790475)); later code changes require a new successful run.
+- The latest recorded implementation run completed with 1024 passed in 6.14 seconds on implementation commit `a5400d08c139b9d75aede1438c822d74133395ce` (GitHub Actions run [#52](https://github.com/dalalcoderwitch/CyberShield/actions/runs/43884580764)); later code changes require a new successful run.
 - The test count must be updated whenever tests are added or removed.
 - All current automated tests pass.
 - The test plan distinguishes mocked behavior from real network verification.
