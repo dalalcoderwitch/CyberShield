@@ -108,10 +108,19 @@ At the scanner/report layer, DNS outcomes are distinguished:
 - `invalid`: the URL or resolved destination violates target policy.
 - `timeout`: the overall scan deadline expires.
 
-These detailed outcomes are currently engine/report classifications.
-The Flask integration still uses the backward-compatible resolver
-that returns a target or None. Mapping the detailed DNS outcomes to
-distinct API responses requires coordinated API-layer work and review.
+The Flask API uses the detailed resolver and preserves these
+outcomes in its client-facing error response:
+
+- `invalid` and `not_allowed`: HTTP 403, `TARGET_NOT_ALLOWED`.
+- `dns_error`: HTTP 502, `DNS_RESOLUTION_FAILED`.
+- `dns_timeout`: HTTP 504, `DNS_TIMEOUT`.
+- `dns_capacity`: HTTP 503, `DNS_CAPACITY_EXCEEDED`.
+- `timeout`: HTTP 504, `SCAN_TIMEOUT`.
+
+A failed or rejected resolution must not start the scan engine or an
+outbound HTTP request. The validated target returned by the resolver
+is passed to the scan engine so that it can connect using the same
+validated addresses rather than resolving the hostname again.
 
 The timeout wrapper cannot forcibly cancel an operating-system
 `getaddrinfo` operation. A DNS lookup that exceeds the wait limit
