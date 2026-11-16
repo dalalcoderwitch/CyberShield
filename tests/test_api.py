@@ -2690,8 +2690,32 @@ def test_scan_api_returns_correlation_generated_by_real_report_engine(
         "error_information_disclosure",
         "public_security_files",
     }
-    assert week2_check_ids.issubset(findings_by_id)
-    assert week3_check_ids.issubset(findings_by_id)
+    foundational_check_ids = {
+        "https_connection",
+        "header_hsts",
+        "header_csp",
+        "header_x_content_type_options",
+        "header_x_frame_options",
+    }
+    existing_expanded_check_ids = {
+        "dns_spf",
+        "dns_dmarc",
+        "dnssec",
+        "subdomain_takeover_indicators",
+        "cache_security",
+        "xss_passive_indicators",
+        "sqli_passive_indicators",
+    }
+    expected_check_ids = (
+        foundational_check_ids
+        | week2_check_ids
+        | week3_check_ids
+        | existing_expanded_check_ids
+    )
+    assert len(expected_check_ids) == 30
+    assert len(report["findings"]) == 30
+    assert len(findings_by_id) == 30
+    assert set(findings_by_id) == expected_check_ids
     required_finding_fields = {
         "check_id",
         "title",
@@ -2703,12 +2727,15 @@ def test_scan_api_returns_correlation_generated_by_real_report_engine(
         "recommendation",
         "limitations",
     }
-    for check_id in week2_check_ids | week3_check_ids:
+    for check_id in expected_check_ids:
         finding = findings_by_id[check_id]
         assert required_finding_fields.issubset(finding)
         assert finding["status"] in {
             "passed", "warning", "not_verified", "error", "skipped"
         }
+        assert finding["title"]
+        assert finding["explanation"]
+        assert finding["recommendation"]
         assert isinstance(finding["limitations"], list)
 
     assert findings_by_id["cookie_secure"]["status"] == "warning"
