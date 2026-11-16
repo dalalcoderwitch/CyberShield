@@ -383,6 +383,138 @@ def test_scan_endpoint_returns_contract_compatible_report(monkeypatch):
     assert report["target_url"] == "https://example.com"
 
 
+@pytest.mark.parametrize(
+    "not_after,expected_status",
+    [
+        ("Jan 01 00:00:00 2099 GMT", "passed"),
+        ("Jan 01 00:00:00 2020 GMT", "warning"),
+        ("not-a-valid-asn1-date", "not_verified"),
+    ],
+)
+def test_scan_api_preserves_tls_expiry_outcome_and_other_week2_checks(
+    monkeypatch,
+    not_after,
+    expected_status,
+):
+    """Exercise certificate-date outcomes through Flask and the real report engine."""
+
+    from security_scanner.checks.result import CheckResult
+
+    app = api_module.create_app()
+    client = app.test_client()
+    monkeypatch.setattr(
+        api_module,
+        "resolve_target",
+        lambda url, deadline=None: object(),
+    )
+
+    headers = {
+        "Strict-Transport-Security": "max-age=31536000",
+        "Content-Security-Policy": "default-src 'self'",
+        "X-Content-Type-Options": "nosniff",
+        "X-Frame-Options": "DENY",
+        "Referrer-Policy": "strict-origin-when-cross-origin",
+        "Permissions-Policy": "camera=()",
+    }
+
+    def fake_get_response(
+        url,
+        resolved_target=None,
+        deadline=None,
+        tls_metadata=None,
+        redirect_dns_answers=None,
+        validated_target_capture=None,
+        cookie_evidence_capture=None,
+        access_evidence_capture=None,
+        disclosure_evidence_capture=None,
+    ):
+        tls_metadata.update(
+            not_before="Jan 01 00:00:00 2020 GMT",
+            not_after=not_after,
+            chain_available=True,
+            version="TLSv1.3",
+            cipher="TLS_AES_128_GCM_SHA256",
+        )
+        if cookie_evidence_capture is not None:
+            cookie_evidence_capture.update(
+                available=True,
+                observations=(),
+            )
+        if access_evidence_capture is not None:
+            access_evidence_capture.update(
+                available=True,
+                location_values=(),
+            )
+        if disclosure_evidence_capture is not None:
+            disclosure_evidence_capture.clear()
+        return 200, headers, None
+
+    monkeypatch.setattr(
+        "security_scanner.report._safe_get_response",
+        fake_get_response,
+    )
+
+    def isolated_dns_result(check_id, title):
+        return CheckResult(
+            check_id=check_id,
+            title=title,
+            status="skipped",
+            severity="info",
+            confidence="low",
+            evidence="DNS evaluation is isolated in this TLS API test.",
+            explanation="No DNS security conclusion is inferred.",
+            recommendation="Use the dedicated DNS evaluator tests.",
+            limitations=("Controlled API test fixture.",),
+        )
+
+    monkeypatch.setattr(
+        "security_scanner.report.evaluate_spf_domain",
+        lambda domain, deadline=None: isolated_dns_result("dns_spf", "SPF"),
+    )
+    monkeypatch.setattr(
+        "security_scanner.report.evaluate_dmarc_domain",
+        lambda domain, deadline=None: isolated_dns_result("dns_dmarc", "DMARC"),
+    )
+    monkeypatch.setattr(
+        "security_scanner.report.evaluate_dnssec_domain",
+        lambda domain, deadline=None: isolated_dns_result("dnssec", "DNSSEC"),
+    )
+    monkeypatch.setattr(
+        "security_scanner.report.evaluate_takeover_domain",
+        lambda hostname, deadline=None: isolated_dns_result(
+            "subdomain_takeover_indicators",
+            "Passive takeover indicators",
+        ),
+    )
+
+    response = client.post(
+        "/api/v1/scan",
+        json={
+            "target_url": "https://example.com",
+            "authorization_confirmed": True,
+            "include_expanded_checks": True,
+        },
+    )
+
+    assert response.status_code == 200
+    report = response.get_json()
+    findings_by_id = {
+        finding["check_id"]: finding
+        for finding in report["findings"]
+    }
+
+    assert findings_by_id["tls_certificate_expiry"]["status"] == expected_status
+    assert findings_by_id["tls_certificate_chain"]["status"] == "passed"
+    assert findings_by_id["tls_protocol_config"]["status"] == "passed"
+    assert findings_by_id["https_connection"]["status"] == "passed"
+    assert len(report["findings"]) == report["summary"]["total"] == 30
+    for status in ("passed", "warning", "not_verified", "error", "skipped"):
+        assert report["summary"][status] == sum(
+            finding["status"] == status
+            for finding in report["findings"]
+        )
+
+
 def test_scan_api_preserves_week2_findings_and_partial_results(monkeypatch):
     """The Flask boundary preserves all seven Week 2 checks and partial status."""
 
